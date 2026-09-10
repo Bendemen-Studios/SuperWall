@@ -86,7 +86,7 @@ end;
 
 procedure CurStepChanged(CurStep: TSetupStep);
 var
-  DashboardUrl, EnrollmentKey, AgentPath, EnrollmentFile, AppDir: string;
+  DashboardUrl, EnrollmentKey, AgentPath, EnrollmentFile, DashboardFile, AppDir, CommonDir: string;
   ResultCode: Integer;
 begin
   if CurStep <> ssPostInstall then Exit;
@@ -95,22 +95,29 @@ begin
   EnrollmentKey := Trim(EnrollmentPage.Values[0]);
   AgentPath := ExpandConstant('{app}\{#MyExeName}');
   AppDir := ExpandConstant('{app}');
-  EnrollmentFile := ExpandConstant('{commonappdata}\SuperWall\enrollment.key');
+  CommonDir := ExpandConstant('{commonappdata}\SuperWall');
+  EnrollmentFile := CommonDir + '\enrollment.key';
+  DashboardFile := CommonDir + '\dashboard.url';
 
-  if not DirExists(ExpandConstant('{commonappdata}\SuperWall')) then
-    ForceDirectories(ExpandConstant('{commonappdata}\SuperWall'));
+  if not DirExists(CommonDir) then
+    ForceDirectories(CommonDir);
+
+  { Keep a local persistent copy for the LocalSystem service. }
+  SaveStringToFile(DashboardFile, DashboardUrl, False);
+  SaveStringToFile(EnrollmentFile, EnrollmentKey, False);
+
+  RunHidden(ExpandConstant('{sysnative}\icacls.exe'),
+    '"' + CommonDir + '" /inheritance:r /grant:r "SYSTEM:(OI)(CI)(F)" "Administrators:(OI)(CI)(F)" "Users:(OI)(CI)(RX)" /deny "Users:(OI)(CI)(W,DC,WDAC,WEA)"');
+  RunHidden(ExpandConstant('{sysnative}\icacls.exe'),
+    '"' + EnrollmentFile + '" /inheritance:r /grant:r "SYSTEM:(F)" "Administrators:(F)"');
+  RunHidden(ExpandConstant('{sysnative}\icacls.exe'),
+    '"' + DashboardFile + '" /inheritance:r /grant:r "SYSTEM:(F)" "Administrators:(F)"');
+  RunHidden(ExpandConstant('{sysnative}\icacls.exe'),
+    '"' + AppDir + '" /inheritance:r /grant:r "SYSTEM:(OI)(CI)(F)" "Administrators:(OI)(CI)(F)" "Users:(OI)(CI)(RX)" /deny "Users:(OI)(CI)(W,DC,WDAC,WEA)"');
 
   RegWriteStringValue(HKEY_LOCAL_MACHINE,
     'SYSTEM\CurrentControlSet\Control\Session Manager\Environment',
     'SUPERWALL_DASHBOARD', DashboardUrl);
-
-  SaveStringToFile(EnrollmentFile, EnrollmentKey, False);
-  RunHidden(ExpandConstant('{sysnative}\icacls.exe'),
-    '"' + ExpandConstant('{commonappdata}\SuperWall') + '" /inheritance:r /grant:r "SYSTEM:(OI)(CI)(F)" "Administrators:(OI)(CI)(F)" "Users:(OI)(CI)(RX)" /deny "Users:(OI)(CI)(W,DC,WDAC,WEA)"');
-  RunHidden(ExpandConstant('{sysnative}\icacls.exe'),
-    '"' + EnrollmentFile + '" /inheritance:r /grant:r "SYSTEM:(F)" "Administrators:(F)"');
-  RunHidden(ExpandConstant('{sysnative}\icacls.exe'),
-    '"' + AppDir + '" /inheritance:r /grant:r "SYSTEM:(OI)(CI)(F)" "Administrators:(OI)(CI)(F)" "Users:(OI)(CI)(RX)" /deny "Users:(OI)(CI)(W,DC,WDAC,WEA)"');
 
   Exec(ExpandConstant('{sysnative}\sc.exe'),
     'stop SuperWallAgent', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
@@ -130,9 +137,8 @@ begin
     '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
   Exec(ExpandConstant('{sysnative}\sc.exe'),
     'failureflag SuperWallAgent 1', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
-
   Exec(ExpandConstant('{sysnative}\sc.exe'),
     'start SuperWallAgent', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
 
-  MsgBox('SuperWall Kids is geïnstalleerd. De pc wordt nu automatisch met het dashboard gekoppeld zodra de enrollment key is geaccepteerd.', mbInformation, MB_OK);
+  MsgBox('SuperWall Kids is geïnstalleerd. De pc wordt automatisch met het dashboard gekoppeld zodra de enrollment key is geaccepteerd.', mbInformation, MB_OK);
 end;
