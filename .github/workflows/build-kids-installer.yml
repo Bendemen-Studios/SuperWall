@@ -3,6 +3,8 @@ name: Build SuperWall Kids Installer
 on:
   workflow_dispatch:
   push:
+    branches:
+      - main
     tags:
       - 'kids-v*'
 
