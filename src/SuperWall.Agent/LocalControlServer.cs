@@ -8,6 +8,7 @@ namespace SuperWall.Agent;
 
 public sealed class LocalControlServer : IDisposable
 {
+    private const int Port = 18581;
     private readonly HttpListener _listener = new();
     private readonly Func<SuperWallPolicy> _getPolicy;
     private int _failedAttempts;
@@ -16,7 +17,8 @@ public sealed class LocalControlServer : IDisposable
     public LocalControlServer(Func<SuperWallPolicy> getPolicy)
     {
         _getPolicy = getPolicy;
-        _listener.Prefixes.Add("http://127.0.0.1:18581/");
+        _listener.AuthenticationSchemes = AuthenticationSchemes.IntegratedWindowsAuthentication;
+        _listener.Prefixes.Add($"http://127.0.0.1:{Port}/");
     }
 
     public void Start()
@@ -34,11 +36,11 @@ public sealed class LocalControlServer : IDisposable
         }
     }
 
-    private static bool IsAdministrator()
+    private static bool IsAdministrator(HttpListenerContext ctx)
     {
         try
         {
-            using var identity = WindowsIdentity.GetCurrent();
+            if (ctx.User?.Identity is not WindowsIdentity identity || !identity.IsAuthenticated) return false;
             using var principal = new WindowsPrincipal(identity);
             return principal.IsInRole(WindowsBuiltInRole.Administrator);
         }
@@ -64,7 +66,7 @@ public sealed class LocalControlServer : IDisposable
                 return;
             }
 
-            if (!IsAdministrator())
+            if (!IsAdministrator(ctx))
             {
                 await WriteJson(ctx, 403, new { ok = false, message = "Administrator privileges required." });
                 return;
@@ -79,14 +81,13 @@ public sealed class LocalControlServer : IDisposable
             string pin = "";
             try
             {
-                using var reader = new StreamReader(ctx.Request.InputStream, Encoding.UTF8, leaveOpen: false);
+                using var reader = new StreamReader(ctx.Request.InputStream, Encoding.UTF8);
                 var body = await reader.ReadToEndAsync();
                 pin = JsonDocument.Parse(body).RootElement.GetProperty("pin").GetString() ?? "";
             }
             catch { }
 
-            var policy = _getPolicy();
-            var ok = DownloadGuard.Unlock(pin, policy);
+            var ok = DownloadGuard.Unlock(pin, _getPolicy());
             if (ok)
             {
                 Interlocked.Exchange(ref _failedAttempts, 0);
