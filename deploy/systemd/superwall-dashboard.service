@@ -1,0 +1,24 @@
+[Unit]
+Description=SuperWall Central Dashboard
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=superwall
+Group=superwall
+WorkingDirectory=/opt/superwall/current
+EnvironmentFile=/etc/superwall/superwall.env
+ExecStart=/usr/bin/dotnet /opt/superwall/current/SuperWall.Dashboard.dll
+Restart=always
+RestartSec=5
+TimeoutStopSec=20
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/superwall
+ReadWritePaths=/var/log/superwall
+
+[Install]
+WantedBy=multi-user.target
