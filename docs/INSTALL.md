@@ -12,9 +12,11 @@ On the server, run the ASP.NET Core dashboard on its internal port:
 dotnet run --project src/SuperWall.Dashboard
 ```
 
+The default dashboard listener is `http://0.0.0.0:7080`.
+
 The public domain should point to this service through an HTTPS reverse proxy. Keep the dashboard admin password and enrollment secret in server-side environment/secret storage and never commit them to Git.
 
-For the public hostname `superwall.hvmc.nl`, proxy HTTPS traffic to the dashboard's internal `http://127.0.0.1:5080` listener and preserve `X-Forwarded-Proto: https`.
+For the public hostname `superwall.hvmc.nl`, proxy HTTPS traffic to the dashboard's internal `http://127.0.0.1:7080` listener and preserve `X-Forwarded-Proto: https`.
 
 ## 2. SuperWall Kids
 
