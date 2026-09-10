@@ -36,6 +36,9 @@ public static class PolicyProfiles
         cmd.ExecuteNonQuery();
     }
 
+    public static RiskProfile ParseProfile(string? value) =>
+        Enum.TryParse<RiskProfile>(value, true, out var profile) ? profile : RiskProfile.Low;
+
     public static SuperWallPolicy BuildEffective(SqliteConnection c, RiskProfile profile, SuperWallPolicy? overridePolicy = null)
     {
         var central = Get(c, profile);
