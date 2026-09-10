@@ -46,7 +46,7 @@ begin
     'Centrale dashboard-server',
     'Vul het HTTPS-adres van het SuperWall dashboard in.');
   DashboardPage.Add('Dashboard URL:', False);
-  DashboardPage.Values[0] := 'https://';
+  DashboardPage.Values[0] := 'https://superwall.hvmc.nl';
 
   EnrollmentPage := CreateInputQueryPage(DashboardPage.ID,
     'Apparaat registreren',
