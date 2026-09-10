@@ -10,6 +10,7 @@ public sealed class PolicySyncService : BackgroundService
 {
     private readonly string _stateDir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData), "SuperWall");
     private const string EnrollmentFileName = "enrollment.key";
+    private const string DashboardFileName = "dashboard.url";
     private readonly HttpClient _http = new() { Timeout = TimeSpan.FromSeconds(15) };
     private SuperWallPolicy _policy = new();
     private string _deviceId = "";
@@ -41,7 +42,14 @@ public sealed class PolicySyncService : BackgroundService
     {
         var file = Path.Combine(_stateDir, "policy.json");
         try { _policy = JsonSerializer.Deserialize<SuperWallPolicy>(File.ReadAllText(file)) ?? new(); } catch { _policy = new(); }
-        _dashboard = Environment.GetEnvironmentVariable("SUPERWALL_DASHBOARD") ?? _policy.DashboardUrl;
+
+        var dashboardFile = Path.Combine(_stateDir, DashboardFileName);
+        var configured = "";
+        try { if (File.Exists(dashboardFile)) configured = File.ReadAllText(dashboardFile).Trim(); } catch { }
+        _dashboard = string.IsNullOrWhiteSpace(configured)
+            ? (Environment.GetEnvironmentVariable("SUPERWALL_DASHBOARD") ?? _policy.DashboardUrl)
+            : configured;
+
         _agentToken = LocalSecrets.Load("agent-token") ?? "";
         _deviceId = LoadOrCreateDeviceId();
         EnsureDefaultPin();
