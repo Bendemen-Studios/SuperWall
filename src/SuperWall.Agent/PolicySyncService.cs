@@ -20,7 +20,7 @@ public sealed class PolicySyncService : BackgroundService
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
         Directory.CreateDirectory(_stateDir);
-        HardenStateDirectory();
+        SecurityHardening.Apply();
         LoadCached();
         ApplyPolicy();
         _local = new LocalControlServer(() => _policy);
@@ -28,6 +28,7 @@ public sealed class PolicySyncService : BackgroundService
         while (!stoppingToken.IsCancellationRequested)
         {
             await SyncOnce(stoppingToken);
+            SecurityHardening.Apply();
             await Task.Delay(TimeSpan.FromSeconds(60), stoppingToken);
         }
     }
@@ -73,8 +74,7 @@ public sealed class PolicySyncService : BackgroundService
             var response = await _http.SendAsync(request, ct);
             if (!response.IsSuccessStatusCode) return;
             var envelope = await response.Content.ReadFromJsonAsync<PolicyEnvelope>(cancellationToken: ct);
-            if (envelope is null) return;
-            if (envelope.Policy.Version < _policy.Version) return;
+            if (envelope is null || envelope.Policy.Version < _policy.Version) return;
             _policy = envelope.Policy;
             EnsureDefaultPin();
             SavePolicy();
@@ -101,6 +101,7 @@ public sealed class PolicySyncService : BackgroundService
         _policy = result.Policy ?? new();
         EnsureDefaultPin();
         SavePolicy();
+        Environment.SetEnvironmentVariable("SUPERWALL_ENROLLMENT_KEY", null, EnvironmentVariableTarget.Machine);
     }
 
     private void SavePolicy()
@@ -141,21 +142,11 @@ public sealed class PolicySyncService : BackgroundService
         await _http.SendAsync(request, ct);
     }
 
-    private void HardenStateDirectory()
-    {
-        try
-        {
-            var psi = new System.Diagnostics.ProcessStartInfo("icacls", $"\"{_stateDir}\" /inheritance:r /grant:r SYSTEM:(OI)(CI)(F) Administrators:(OI)(CI)(F)")
-            { UseShellExecute = false, CreateNoWindow = true, RedirectStandardOutput = true, RedirectStandardError = true };
-            using var p = System.Diagnostics.Process.Start(psi); p?.WaitForExit(5000);
-        }
-        catch { }
-    }
-
     public override void Dispose()
     {
         _proxy?.Dispose();
         _local?.Dispose();
+        _http.Dispose();
         base.Dispose();
     }
 }
