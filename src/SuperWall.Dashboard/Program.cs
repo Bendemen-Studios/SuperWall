@@ -73,14 +73,25 @@ app.MapPost("/api/admin/login", async (HttpRequest req) =>
     var supplied = body.GetValueOrDefault("password", "");
     var ok = CryptographicOperations.FixedTimeEquals(Encoding.UTF8.GetBytes(HashForCompare(supplied)), Encoding.UTF8.GetBytes(HashForCompare(adminPassword)));
     if (!ok) return Results.Unauthorized();
+
     var token = Convert.ToHexString(RandomNumberGenerator.GetBytes(32));
     sessions[token] = DateTimeOffset.UtcNow.AddHours(8);
-    return Results.Json(new { ok = true }, new JsonSerializerOptions(), "application/json", 200, null, false);
+    req.HttpContext.Response.Cookies.Append("superwall_admin", token, new CookieOptions
+    {
+        HttpOnly = true,
+        Secure = true,
+        SameSite = SameSiteMode.Strict,
+        Path = "/",
+        MaxAge = TimeSpan.FromHours(8),
+        IsEssential = true
+    });
+    return Results.Ok(new { ok = true });
 });
 
 app.MapPost("/api/admin/logout", (HttpRequest req) =>
 {
     if (req.Cookies.TryGetValue("superwall_admin", out var token)) sessions.TryRemove(token, out _);
+    req.HttpContext.Response.Cookies.Delete("superwall_admin", new CookieOptions { Path = "/", Secure = true, HttpOnly = true, SameSite = SameSiteMode.Strict });
     return Results.Ok();
 });
 
@@ -92,6 +103,8 @@ app.Use(async (ctx, next) =>
     }
     await next();
 });
+
+app.MapGet("/api/admin/session", (HttpRequest req) => IsAdmin(req) ? Results.Ok(new { authenticated = true }) : Results.Unauthorized());
 
 app.MapGet("/api/devices", (HttpRequest req) =>
 {
