@@ -83,4 +83,14 @@ jobs:
           files: |
             publish/installer/SuperWall-Kids-Setup-0.3.0.exe
             publish/installer/SHA256.txt
-          generate_release_notes: true
+          body: |
+            SuperWall Kids 0.3.0
+
+            Windows client installer for SuperWall.
+
+            - Self-contained Windows x64 agent
+            - Enrollment through SuperWall Central Dashboard
+            - Default Low Risk profile
+          generate_release_notes: false
+          draft: false
+          prerelease: false
