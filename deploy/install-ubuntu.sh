@@ -46,18 +46,17 @@ chown -R superwall:superwall "$APP_ROOT" "$DATA_ROOT"
 
 if [[ ! -f "$ENV_DIR/superwall.env" ]]; then
   ADMIN_PASSWORD="$(openssl rand -base64 36)"
-  ENROLLMENT_KEY="$(openssl rand -base64 48)"
   cat > "$ENV_DIR/superwall.env" <<EOF
 SUPERWALL_BIND=http://0.0.0.0:7080
 SUPERWALL_ALLOW_HTTP=1
 SUPERWALL_ADMIN_PASSWORD=$ADMIN_PASSWORD
-SUPERWALL_ENROLLMENT_KEY=$ENROLLMENT_KEY
 EOF
   chmod 600 "$ENV_DIR/superwall.env"
   echo "Generated new dashboard credentials in $ENV_DIR/superwall.env"
 else
   chmod 600 "$ENV_DIR/superwall.env"
   sed -i 's#^SUPERWALL_BIND=.*#SUPERWALL_BIND=http://0.0.0.0:7080#' "$ENV_DIR/superwall.env"
+  sed -i '/^SUPERWALL_ENROLLMENT_KEY=/d' "$ENV_DIR/superwall.env"
 fi
 
 # Persist dashboard data outside the deployed application directory.
@@ -80,4 +79,5 @@ echo "SuperWall dashboard deployment complete."
 echo "Public URL (via Nginx Proxy Manager): https://$DOMAIN"
 echo "Dashboard listener: http://0.0.0.0:7080"
 echo "Environment: $ENV_DIR/superwall.env"
+echo "Enrollment keys are managed from the dashboard."
 echo "Nginx Proxy Manager must forward $DOMAIN to this VPS on port 7080."
