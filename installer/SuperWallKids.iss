@@ -1,5 +1,5 @@
 #define MyAppName "SuperWall Kids"
-#define MyAppVersion "0.2.0"
+#define MyAppVersion "0.3.0"
 #define MyPublisher "Bendemen Studios"
 #define MyExeName "SuperWall.Agent.exe"
 #define ServiceSddl "D:(A;;CCLCSWRPWPDTLOCRRC;;;SY)(A;;CCDCLCSWRPWPDTLOCRSDRCWDWO;;;BA)(A;;CCLCRP;;;AU)"
@@ -38,6 +38,13 @@ var
 function IsValidHttpsUrl(const Value: string): Boolean;
 begin
   Result := (Pos('https://', LowerCase(Value)) = 1) and (Length(Value) > 8);
+end;
+
+function RunHidden(const FileName, Params: string): Boolean;
+var
+  ResultCode: Integer;
+begin
+  Result := Exec(FileName, Params, '', SW_HIDE, ewWaitUntilTerminated, ResultCode) and (ResultCode = 0);
 end;
 
 procedure InitializeWizard;
@@ -79,25 +86,34 @@ end;
 
 procedure CurStepChanged(CurStep: TSetupStep);
 var
-  DashboardUrl, EnrollmentKey, AgentPath, EnrollmentFile: string;
+  DashboardUrl, EnrollmentKey, AgentPath, EnrollmentFile, AppDir: string;
   ResultCode: Integer;
 begin
   if CurStep <> ssPostInstall then Exit;
 
   DashboardUrl := DashboardPage.Values[0];
-  EnrollmentKey := EnrollmentPage.Values[0];
+  EnrollmentKey := Trim(EnrollmentPage.Values[0]);
   AgentPath := ExpandConstant('{app}\{#MyExeName}');
+  AppDir := ExpandConstant('{app}');
   EnrollmentFile := ExpandConstant('{commonappdata}\SuperWall\enrollment.key');
+
+  if not DirExists(ExpandConstant('{commonappdata}\SuperWall')) then
+    ForceDirectories(ExpandConstant('{commonappdata}\SuperWall'));
 
   RegWriteStringValue(HKEY_LOCAL_MACHINE,
     'SYSTEM\CurrentControlSet\Control\Session Manager\Environment',
     'SUPERWALL_DASHBOARD', DashboardUrl);
 
   SaveStringToFile(EnrollmentFile, EnrollmentKey, False);
-  Exec(ExpandConstant('{sysnative}\icacls.exe'),
-    '"' + EnrollmentFile + '" /inheritance:r /grant:r "SYSTEM:(F)" "Administrators:(F)"',
-    '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+  RunHidden(ExpandConstant('{sysnative}\icacls.exe'),
+    '"' + ExpandConstant('{commonappdata}\SuperWall') + '" /inheritance:r /grant:r "SYSTEM:(OI)(CI)(F)" "Administrators:(OI)(CI)(F)" "Users:(OI)(CI)(RX)" /deny "Users:(OI)(CI)(W,DC,WDAC,WEA)"');
+  RunHidden(ExpandConstant('{sysnative}\icacls.exe'),
+    '"' + EnrollmentFile + '" /inheritance:r /grant:r "SYSTEM:(F)" "Administrators:(F)"');
+  RunHidden(ExpandConstant('{sysnative}\icacls.exe'),
+    '"' + AppDir + '" /inheritance:r /grant:r "SYSTEM:(OI)(CI)(F)" "Administrators:(OI)(CI)(F)" "Users:(OI)(CI)(RX)" /deny "Users:(OI)(CI)(W,DC,WDAC,WEA)"');
 
+  Exec(ExpandConstant('{sysnative}\sc.exe'),
+    'stop SuperWallAgent', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
   Exec(ExpandConstant('{sysnative}\sc.exe'),
     'delete SuperWallAgent', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
   Exec(ExpandConstant('{sysnative}\sc.exe'),
@@ -106,16 +122,17 @@ begin
   Exec(ExpandConstant('{sysnative}\sc.exe'),
     'description SuperWallAgent "SuperWall Kids offline-first parental control service"',
     '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
-
-  { Immediately restrict service control to SYSTEM/Administrators.
-    Authenticated users retain query-only access and cannot start/stop/configure. }
   Exec(ExpandConstant('{sysnative}\sc.exe'),
     'sdset SuperWallAgent {#ServiceSddl}',
     '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
-
   Exec(ExpandConstant('{sysnative}\sc.exe'),
     'failure SuperWallAgent reset= 86400 actions= restart/5000/restart/15000/restart/60000',
     '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
   Exec(ExpandConstant('{sysnative}\sc.exe'),
+    'failureflag SuperWallAgent 1', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+
+  Exec(ExpandConstant('{sysnative}\sc.exe'),
     'start SuperWallAgent', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+
+  MsgBox('SuperWall Kids is geïnstalleerd. De pc wordt nu automatisch met het dashboard gekoppeld zodra de enrollment key is geaccepteerd.', mbInformation, MB_OK);
 end;
