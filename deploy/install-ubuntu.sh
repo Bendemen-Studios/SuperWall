@@ -14,11 +14,11 @@ fi
 
 export DEBIAN_FRONTEND=noninteractive
 apt-get update
-apt-get install -y ca-certificates curl git nginx certbot python3-certbot-nginx openssl gnupg
+apt-get install -y ca-certificates curl git nginx certbot python3-certbot-nginx openssl
 
 if ! command -v dotnet >/dev/null 2>&1 || ! dotnet --list-sdks | grep -q '^8\.'; then
   install -d /etc/apt/keyrings
-  curl -fsSL https://packages.microsoft.com/keys/microsoft.asc | gpg --dearmor --yes -o /etc/apt/keyrings/microsoft.gpg
+  curl -fsSL https://packages.microsoft.com/keys/microsoft.asc | gpg --dearmor -o /etc/apt/keyrings/microsoft.gpg
   chmod a+r /etc/apt/keyrings/microsoft.gpg
   echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/microsoft.gpg] https://packages.microsoft.com/ubuntu/24.04/prod noble main" > /etc/apt/sources.list.d/microsoft-prod.list
   apt-get update
@@ -49,7 +49,7 @@ if [[ ! -f "$ENV_DIR/superwall.env" ]]; then
   ADMIN_PASSWORD="$(openssl rand -base64 36)"
   ENROLLMENT_KEY="$(openssl rand -base64 48)"
   cat > "$ENV_DIR/superwall.env" <<EOF
-SUPERWALL_BIND=http://127.0.0.1:7080
+SUPERWALL_BIND=http://0.0.0.0:7080
 SUPERWALL_ALLOW_HTTP=1
 SUPERWALL_ADMIN_PASSWORD=$ADMIN_PASSWORD
 SUPERWALL_ENROLLMENT_KEY=$ENROLLMENT_KEY
@@ -58,65 +58,31 @@ EOF
   echo "Generated new dashboard credentials in $ENV_DIR/superwall.env"
 else
   chmod 600 "$ENV_DIR/superwall.env"
+  sed -i 's#^SUPERWALL_BIND=.*#SUPERWALL_BIND=http://0.0.0.0:7080#' "$ENV_DIR/superwall.env"
 fi
 
 # Persist dashboard database outside the application deployment directory.
 ln -sfn "$DATA_ROOT" "$APP_ROOT/data"
 
 install -m 0644 deploy/systemd/superwall-dashboard.service /etc/systemd/system/superwall-dashboard.service
-rm -f /etc/nginx/sites-enabled/default
 
-# First configure Nginx as HTTP-only so nginx -t succeeds before a certificate exists.
-cat > /etc/nginx/sites-available/superwall.hvmc.nl.conf <<'NGINX_BOOTSTRAP'
-server {
-    listen 80;
-    listen [::]:80;
-    server_name superwall.hvmc.nl;
-
-    location /.well-known/acme-challenge/ {
-        root /var/www/certbot;
-    }
-
-    location / {
-        proxy_pass http://127.0.0.1:7080;
-        proxy_http_version 1.1;
-        proxy_set_header Host $host;
-        proxy_set_header X-Real-IP $remote_addr;
-        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto http;
-        proxy_set_header X-Forwarded-Host $host;
-        proxy_set_header Connection "";
-    }
-}
-NGINX_BOOTSTRAP
-
-ln -sfn /etc/nginx/sites-available/superwall.hvmc.nl.conf /etc/nginx/sites-enabled/superwall.hvmc.nl.conf
-nginx -t
 systemctl daemon-reload
-systemctl enable --now superwall-dashboard
-systemctl enable --now nginx
+systemctl enable superwall-dashboard
+systemctl restart superwall-dashboard
 
-if ! getent ahosts "$DOMAIN" >/dev/null 2>&1; then
-  echo "DNS for $DOMAIN does not resolve yet. Point it to this server, then run:"
-  echo "  certbot --nginx -d $DOMAIN --redirect"
-  systemctl --no-pager --full status superwall-dashboard || true
-  exit 0
+# Nginx Proxy Manager terminates TLS in the recommended deployment. Keep a
+# local Nginx config only as an optional fallback; do not bind public HTTPS here.
+rm -f /etc/nginx/sites-enabled/superwall.hvmc.nl.conf /etc/nginx/sites-available/superwall.hvmc.nl.conf
+systemctl disable --now nginx 2>/dev/null || true
+
+if ! systemctl is-active --quiet superwall-dashboard; then
+  echo "SuperWall dashboard failed to start. Recent logs:"
+  journalctl -u superwall-dashboard -n 80 --no-pager || true
+  exit 1
 fi
-
-certbot certonly --webroot -w /var/www/certbot -d "$DOMAIN" --non-interactive --agree-tos --register-unsafely-without-email
-
-# Replace bootstrap HTTP config with the production HTTPS config from the repository.
-install -m 0644 "$WORKDIR/repo/deploy/nginx/superwall.hvmc.nl.conf" /etc/nginx/sites-available/superwall.hvmc.nl.conf
-nginx -t
-systemctl reload nginx
-
-# Test certificate renewal configuration without changing the live certificate.
-certbot renew --dry-run
-
-systemctl --no-pager --full status superwall-dashboard || true
 
 echo
 echo "SuperWall dashboard deployment complete."
 echo "URL: https://$DOMAIN"
-echo "Internal dashboard: http://127.0.0.1:7080"
+echo "Internal dashboard: http://127.0.0.1:7080 or VPS:7080 for Nginx Proxy Manager"
 echo "Environment: $ENV_DIR/superwall.env"
