@@ -29,16 +29,27 @@ jobs:
       - name: Install Inno Setup 7
         shell: pwsh
         run: |
-          winget install --id JRSoftware.InnoSetup.7 -e --silent --accept-source-agreements --accept-package-agreements
+          winget install --id JRSoftware.InnoSetup.7 -e --silent --accept-source-agreements --accept-package-agreements --source winget
 
       - name: Build EXE installer
         shell: pwsh
         run: |
-          $iscc = @(
-            'C:\Program Files\Inno Setup 7\ISCC.exe',
-            'C:\Program Files (x86)\Inno Setup 7\ISCC.exe'
-          ) | Where-Object { Test-Path $_ } | Select-Object -First 1
-          if (-not $iscc) { throw 'Inno Setup compiler not found.' }
+          $candidates = @(
+            "$env:ProgramFiles\Inno Setup 7\ISCC.exe",
+            "${env:ProgramFiles(x86)}\Inno Setup 7\ISCC.exe",
+            "$env:LOCALAPPDATA\Programs\Inno Setup 7\ISCC.exe"
+          )
+
+          $iscc = $candidates | Where-Object { Test-Path $_ } | Select-Object -First 1
+
+          if (-not $iscc) {
+            $roots = @($env:ProgramFiles, ${env:ProgramFiles(x86)}, "$env:LOCALAPPDATA\Programs") | Where-Object { $_ -and (Test-Path $_) }
+            $iscc = Get-ChildItem -Path $roots -Filter 'ISCC.exe' -Recurse -ErrorAction SilentlyContinue |
+              Select-Object -First 1 -ExpandProperty FullName
+          }
+
+          if (-not $iscc) { throw 'Inno Setup compiler (ISCC.exe) not found after installation.' }
+          Write-Host "Using Inno Setup compiler: $iscc"
           New-Item -ItemType Directory -Force publish/installer | Out-Null
           & $iscc installer/SuperWallKids.iss
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
