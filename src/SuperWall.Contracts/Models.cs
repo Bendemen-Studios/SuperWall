@@ -13,7 +13,7 @@ public sealed class SuperWallPolicy
     public bool DownloadsBlocked { get; set; } = true;
     public string DownloadPinHash { get; set; } = "";
     public string DownloadPinSalt { get; set; } = "";
-    public string DashboardUrl { get; set; } = "";
+    public string DashboardUrl { get; set; } = "https://superwall.hvmc.nl";
     public bool LockBrowserInstallation { get; set; } = true;
     public bool BlockPortableBrowsers { get; set; } = true;
 }
@@ -59,4 +59,27 @@ public sealed class EnrollResponse
 {
     public string AgentToken { get; set; } = "";
     public SuperWallPolicy Policy { get; set; } = new();
+}
+
+public sealed class EnrollmentKeyInfo
+{
+    public string Id { get; set; } = "";
+    public string Label { get; set; } = "";
+    public DateTimeOffset CreatedUtc { get; set; }
+    public DateTimeOffset ExpiresUtc { get; set; }
+    public bool Used { get; set; }
+    public bool Revoked { get; set; }
+    public DateTimeOffset? UsedUtc { get; set; }
+}
+
+public sealed class CreateEnrollmentKeyRequest
+{
+    public string Label { get; set; } = "";
+    public int ExpiresMinutes { get; set; } = 30;
+}
+
+public sealed class CreatedEnrollmentKey
+{
+    public EnrollmentKeyInfo Info { get; set; } = new();
+    public string Key { get; set; } = "";
 }
