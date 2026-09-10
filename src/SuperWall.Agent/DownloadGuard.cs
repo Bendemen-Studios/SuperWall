@@ -6,8 +6,8 @@ namespace SuperWall.Agent;
 public static class DownloadGuard
 {
     private static Timer? _timer;
-    private static volatile bool _enabled;
-    private static volatile DateTimeOffset _unlockedUntilUtc;
+    private static bool _enabled;
+    private static DateTimeOffset _unlockedUntilUtc;
     private static readonly object Gate = new();
     private static readonly string StateFile = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData), "SuperWall", "download-unlocked.json");
 
