@@ -3,15 +3,27 @@
 <head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Super Wall</title><style>
 :root{font-family:Inter,system-ui,sans-serif;background:#0b1020;color:#eef2ff}body{margin:0}.wrap{max-width:1180px;margin:auto;padding:28px}.top{display:flex;justify-content:space-between;align-items:center;gap:16px}.brand{font-size:28px;font-weight:800}.muted{color:#9ca8c7}.grid{display:grid;grid-template-columns:repeat(3,1fr);gap:16px;margin-top:20px}.card{background:#131b31;border:1px solid #273250;border-radius:16px;padding:18px}.wide{grid-column:1/-1}button,select,input{border:1px solid #344161;border-radius:10px;background:#0f1629;color:#eef2ff;padding:10px 12px}button{cursor:pointer}.danger{border-color:#80404a}.row{display:flex;gap:10px;flex-wrap:wrap;align-items:center}.device{display:flex;justify-content:space-between;gap:12px;align-items:center;padding:12px 0;border-bottom:1px solid #26304a}.pill{padding:5px 9px;border-radius:999px;background:#253052;font-size:12px}.on{background:#164d39}.off{background:#5a2730}table{width:100%;border-collapse:collapse}th,td{text-align:left;padding:9px;border-bottom:1px solid #273250;font-size:13px}code{color:#b8c6ff}@media(max-width:800px){.grid{grid-template-columns:1fr}}
 </style></head>
-<body><div class="wrap"><div class="top"><div><div class="brand">Super Wall</div><div class="muted">Centraal parental-control dashboard</div></div><div class="row"><input id="pw" type="password" placeholder="Admin password"><button onclick="connect()">Connect</button></div></div>
+<body><div class="wrap"><div class="top"><div><div class="brand">Super Wall</div><div class="muted">Centraal parental-control dashboard</div></div><div class="row"><input id="pw" type="password" placeholder="Admin password"><button onclick="connect()">Login</button><button onclick="logout()">Logout</button></div></div>
 <div id="status" class="card" style="margin-top:20px">Niet verbonden.</div><div id="app" class="grid"></div></div>
 <script>
-let admin='';let devices=[];
-const $=id=>document.getElementById(id);const api=(path,opt={})=>fetch(path,{...opt,headers:{...(opt.headers||{}),'X-SuperWall-Admin':admin,'Content-Type':'application/json'}});
-async function connect(){admin=$('pw').value;const r=await api('/api/devices');if(!r.ok){$('status').textContent='Login mislukt.';return}devices=await r.json();$('status').textContent=`Verbonden · ${devices.length} apparaten`;render();}
+let devices=[];
+const $=id=>document.getElementById(id);
+const api=(path,opt={})=>fetch(path,{...opt,credentials:'same-origin',headers:{...(opt.headers||{}),'Content-Type':'application/json'}});
+async function connect(){
+  const login=await fetch('/api/admin/login',{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json'},body:JSON.stringify({password:$('pw').value})});
+  if(!login.ok){$('status').textContent='Login mislukt.';return}
+  $('pw').value='';
+  await refresh();
+}
+async function refresh(){
+  const r=await api('/api/devices');
+  if(!r.ok){$('status').textContent='Sessie verlopen. Log opnieuw in.';return}
+  devices=await r.json();$('status').textContent=`Verbonden · ${devices.length} apparaten`;render();
+}
+async function logout(){await api('/api/admin/logout',{method:'POST'});devices=[];$('status').textContent='Uitgelogd.';$('app').innerHTML='';}
 function render(){let h='';for(const d of devices){h+=`<div class="card wide device"><div><b>${esc(d.computerName||d.deviceId)}</b><div class="muted"><code>${esc(d.deviceId)}</code> · ${esc(d.osVersion||'Windows')}</div></div><div class="row"><span class="pill ${d.online?'on':'off'}">${d.online?'Online':'Offline'}</span><select onchange="profile('${d.deviceId}',this.value)"><option ${d.profile==='Low'?'selected':''}>Low</option><option ${d.profile==='High'?'selected':''}>High</option></select><button onclick="policy('${d.deviceId}')">Policy</button><button onclick="historyReq('${d.deviceId}')">Search history</button></div></div>`} $('app').innerHTML=h||'<div class="card wide">Nog geen devices aangesloten.</div>';}
-async function profile(id,p){await api(`/api/devices/${encodeURIComponent(id)}/profile`,{method:'PUT',body:JSON.stringify({profile:p})});connect()}
-async function policy(id){const r=await api(`/api/devices/${encodeURIComponent(id)}/policy`);const p=await r.json();const domains=prompt('Geblokkeerde domeinen, komma-gescheiden',p.blockedDomains.join(', '));if(domains===null)return;p.blockedDomains=domains.split(',').map(x=>x.trim()).filter(Boolean);p.urlBlockingEnabled=confirm('URL blocking actief?',p.urlBlockingEnabled);p.downloadsBlocked=confirm('Downloads blokkeren?',p.downloadsBlocked);await api(`/api/devices/${encodeURIComponent(id)}/policy`,{method:'PUT',body:JSON.stringify(p)});}
-async function historyReq(id){await api(`/api/devices/${encodeURIComponent(id)}/history/request`,{method:'POST'});const r=await api(`/api/devices/${encodeURIComponent(id)}/history`);const rows=await r.json();let h='<div class="card wide"><h3>Search history</h3><table><tr><th>Tijd</th><th>Browser</th><th>Titel</th><th>URL</th></tr>';for(const x of rows)h+=`<tr><td>${new Date(x.visitedUtc).toLocaleString()}</td><td>${esc(x.browser)}</td><td>${esc(x.title)}</td><td>${esc(x.url)}</td></tr>`;$('app').insertAdjacentHTML('beforeend',h+'</table></div>')}
+async function profile(id,p){await api(`/api/devices/${encodeURIComponent(id)}/profile`,{method:'PUT',body:JSON.stringify({profile:p})});refresh()}
+async function policy(id){const r=await api(`/api/devices/${encodeURIComponent(id)}/policy`);if(!r.ok)return;const p=await r.json();const domains=prompt('Geblokkeerde domeinen, komma-gescheiden',p.blockedDomains.join(', '));if(domains===null)return;p.blockedDomains=domains.split(',').map(x=>x.trim()).filter(Boolean);p.urlBlockingEnabled=confirm('URL blocking actief?',p.urlBlockingEnabled);p.downloadsBlocked=confirm('Downloads blokkeren?',p.downloadsBlocked);await api(`/api/devices/${encodeURIComponent(id)}/policy`,{method:'PUT',body:JSON.stringify(p)});}
+async function historyReq(id){const q=await api(`/api/devices/${encodeURIComponent(id)}/history/request`,{method:'POST'});if(!q.ok)return;const r=await api(`/api/devices/${encodeURIComponent(id)}/history`);if(!r.ok)return;const rows=await r.json();let h='<div class="card wide"><h3>Search history</h3><table><tr><th>Tijd</th><th>Browser</th><th>Titel</th><th>URL</th></tr>';for(const x of rows)h+=`<tr><td>${new Date(x.visitedUtc).toLocaleString()}</td><td>${esc(x.browser)}</td><td>${esc(x.title)}</td><td>${esc(x.url)}</td></tr>`;$('app').insertAdjacentHTML('beforeend',h+'</table></div>')}
 function esc(s){return String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))}
 </script></body></html>
