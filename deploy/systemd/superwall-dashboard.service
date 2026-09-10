@@ -16,14 +16,13 @@ TimeoutStopSec=20
 NoNewPrivileges=true
 PrivateTmp=true
 
-# The deployment may run inside VPS/container environments where systemd
-# mount/user namespaces are unavailable. Keep filesystem permissions as the
-# primary boundary rather than relying on namespace-based sandboxing.
+# Keep the dashboard service compatible with VPS/container hosts where
+# systemd namespace features may be unavailable. Filesystem permissions
+# remain the primary boundary.
 ProtectSystem=full
 ProtectHome=true
 ReadWritePaths=/opt/superwall/current/data
 ReadWritePaths=/var/lib/superwall
-ReadWritePaths=/var/log/superwall
 
 [Install]
 WantedBy=multi-user.target
