@@ -2,6 +2,7 @@
 #define MyAppVersion "0.2.0"
 #define MyPublisher "Bendemen Studios"
 #define MyExeName "SuperWall.Agent.exe"
+#define ServiceSddl "D:(A;;CCLCSWRPWPDTLOCRRC;;;SY)(A;;CCDCLCSWRPWPDTLOCRSDRCWDWO;;;BA)(A;;CCLCRP;;;AU)"
 
 [Setup]
 AppId={{9C6F5B93-A4C4-4A3E-9B2E-5D1A8E2A4B7C}
@@ -105,6 +106,13 @@ begin
   Exec(ExpandConstant('{sysnative}\sc.exe'),
     'description SuperWallAgent "SuperWall Kids offline-first parental control service"',
     '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+
+  { Immediately restrict service control to SYSTEM/Administrators.
+    Authenticated users retain query-only access and cannot start/stop/configure. }
+  Exec(ExpandConstant('{sysnative}\sc.exe'),
+    'sdset SuperWallAgent {#ServiceSddl}',
+    '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+
   Exec(ExpandConstant('{sysnative}\sc.exe'),
     'failure SuperWallAgent reset= 86400 actions= restart/5000/restart/15000/restart/60000',
     '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
