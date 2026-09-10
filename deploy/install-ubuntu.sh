@@ -14,7 +14,7 @@ fi
 
 export DEBIAN_FRONTEND=noninteractive
 apt-get update
-apt-get install -y ca-certificates curl git nginx certbot python3-certbot-nginx openssl
+apt-get install -y ca-certificates curl git openssl
 
 if ! command -v dotnet >/dev/null 2>&1 || ! dotnet --list-sdks | grep -q '^8\.'; then
   install -d /etc/apt/keyrings
@@ -30,7 +30,6 @@ id superwall >/dev/null 2>&1 || useradd --system --gid superwall --home /nonexis
 
 install -d -o superwall -g superwall -m 0750 "$APP_ROOT" "$DATA_ROOT"
 install -d -o root -g root -m 0750 "$ENV_DIR"
-install -d -o root -g root -m 0755 /var/www/certbot
 
 WORKDIR="$(mktemp -d)"
 trap 'rm -rf "$WORKDIR"' EXIT
@@ -61,7 +60,7 @@ else
   sed -i 's#^SUPERWALL_BIND=.*#SUPERWALL_BIND=http://0.0.0.0:7080#' "$ENV_DIR/superwall.env"
 fi
 
-# Persist dashboard database outside the application deployment directory.
+# Persist dashboard data outside the deployed application directory.
 ln -sfn "$DATA_ROOT" "$APP_ROOT/data"
 
 install -m 0644 deploy/systemd/superwall-dashboard.service /etc/systemd/system/superwall-dashboard.service
@@ -69,11 +68,6 @@ install -m 0644 deploy/systemd/superwall-dashboard.service /etc/systemd/system/s
 systemctl daemon-reload
 systemctl enable superwall-dashboard
 systemctl restart superwall-dashboard
-
-# Nginx Proxy Manager terminates TLS in the recommended deployment. Keep a
-# local Nginx config only as an optional fallback; do not bind public HTTPS here.
-rm -f /etc/nginx/sites-enabled/superwall.hvmc.nl.conf /etc/nginx/sites-available/superwall.hvmc.nl.conf
-systemctl disable --now nginx 2>/dev/null || true
 
 if ! systemctl is-active --quiet superwall-dashboard; then
   echo "SuperWall dashboard failed to start. Recent logs:"
@@ -83,6 +77,7 @@ fi
 
 echo
 echo "SuperWall dashboard deployment complete."
-echo "URL: https://$DOMAIN"
-echo "Internal dashboard: http://127.0.0.1:7080 or VPS:7080 for Nginx Proxy Manager"
+echo "Public URL (via Nginx Proxy Manager): https://$DOMAIN"
+echo "Dashboard listener: http://0.0.0.0:7080"
 echo "Environment: $ENV_DIR/superwall.env"
+echo "Nginx Proxy Manager must forward $DOMAIN to this VPS on port 7080."
