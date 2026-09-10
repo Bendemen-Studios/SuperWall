@@ -21,21 +21,13 @@ Compression=lzma2
 SolidCompression=yes
 WizardStyle=modern
 Uninstallable=no
-SetupIconFile=..\branding\superwall.ico
 
 [Files]
 Source: "..\publish\agent\SuperWall.Agent.exe"; DestDir: "{app}"; Flags: ignoreversion
-Source: "README.md"; DestDir: "{app}"; Flags: ignoreversion
+Source: "..\README.md"; DestDir: "{app}"; Flags: ignoreversion
 
 [Dirs]
 Name: "{commonappdata}\SuperWall"
-
-[Run]
-Filename: "{sysnative}\sc.exe"; Parameters: "failure SuperWallAgent reset= 86400 actions= restart/5000/restart/15000/restart/60000"; Flags: runhidden waituntilterminated
-Filename: "{sysnative}\sc.exe"; Parameters: "start SuperWallAgent"; Flags: runhidden waituntilterminated
-
-[UninstallDelete]
-Type: filesandordirs; Name: "{app}"
 
 [Code]
 var
@@ -59,7 +51,7 @@ begin
   EnrollmentPage := CreateInputQueryPage(DashboardPage.ID,
     'Apparaat registreren',
     'Enrollment key',
-    'Deze eenmalige bootstrap-key koppelt deze Windows-pc aan je SuperWall-installatie.');
+    'Deze bootstrap-key koppelt deze Windows-pc aan je SuperWall-installatie.');
   EnrollmentPage.Add('Enrollment key:', True);
 end;
 
@@ -110,7 +102,9 @@ begin
   Exec(ExpandConstant('{sysnative}\sc.exe'),
     'description SuperWallAgent "SuperWall Kids offline-first parental control service"',
     '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
-
+  Exec(ExpandConstant('{sysnative}\sc.exe'),
+    'failure SuperWallAgent reset= 86400 actions= restart/5000/restart/15000/restart/60000',
+    '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
   Exec(ExpandConstant('{sysnative}\sc.exe'),
     'start SuperWallAgent', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
 end;
