@@ -2,48 +2,38 @@
 
 ## 1. Central dashboard
 
-On the server:
+Production dashboard URL:
 
-```powershell
+`https://superwall.hvmc.nl`
+
+On the server, run the ASP.NET Core dashboard on its internal port:
+
+```bash
 dotnet run --project src/SuperWall.Dashboard
 ```
 
-Set these environment variables before starting it:
+The public domain should point to this service through an HTTPS reverse proxy. Keep the dashboard admin password and enrollment secret in server-side environment/secret storage and never commit them to Git.
 
-```powershell
-$env:SUPERWALL_ADMIN_PASSWORD = 'change-this'
-$env:SUPERWALL_AGENT_TOKEN = 'long-random-agent-token'
-$env:SUPERWALL_BIND = 'http://0.0.0.0:5080'
-```
+For the public hostname `superwall.hvmc.nl`, proxy HTTPS traffic to the dashboard's internal `http://127.0.0.1:5080` listener and preserve `X-Forwarded-Proto: https`.
 
-Open `http://server:5080`.
+## 2. SuperWall Kids
 
-## 2. Build the Windows agent
+The Kids installer is `SuperWall-Kids-Setup-0.2.0.exe`. During installation the dashboard URL is prefilled as:
 
-```powershell
-dotnet publish src/SuperWall.Agent -c Release -r win-x64 --self-contained false -o publish/agent
-```
+`https://superwall.hvmc.nl`
 
-Run PowerShell as Administrator and install it:
+The installer then asks for the one-time enrollment key used to register that Windows device.
 
-```powershell
-.\scripts\Install-Agent.ps1 -DashboardUrl 'https://your-dashboard.example' -AgentToken 'long-random-agent-token'
-```
-
-The agent creates its cached state in `%ProgramData%\SuperWall`.
+The child PC must use a standard Windows account without local administrator rights. The agent runs as the `LocalSystem` Windows service and keeps enforcing the last successful policy while the dashboard is offline.
 
 ## 3. Download override
 
-The default download policy is block. The local override is deliberately short-lived (10 minutes) and requires the configured PIN, currently `2003`:
-
-```powershell
-.\tools\Unlock-Downloads.ps1
-```
+Downloads are blocked by default. The local override is short-lived (10 minutes) and requires the configured PIN `2003`. Only an administrator can access the local unlock endpoint.
 
 ## Offline-first behavior
 
-The device applies the last successful policy from disk. Losing the dashboard connection therefore does not disable URL blocking, browser policies, retention rules, or download protection. Policy changes propagate on the next agent sync (normally within 60 seconds).
+The device applies the last successful policy from disk. Losing the dashboard connection therefore does not disable URL blocking, browser policies, retention rules, or download protection. Policy changes normally propagate within 60 seconds of the next successful sync.
 
 ## Important operational note
 
-The first version uses Windows enterprise browser policies and a local filtering proxy. It is intentionally not a kernel/network filter, so administrators should still prevent unmanaged browsers from being installed and keep the Windows account non-administrative for the child profile.
+SuperWall uses managed browser policies, a local filtering proxy, DNS/hosts hardening and additional download/process controls. The intended deployment boundary is a non-administrative child account. Local administrator access remains outside the application's trust boundary.
