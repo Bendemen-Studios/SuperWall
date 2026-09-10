@@ -16,6 +16,7 @@ public sealed class PolicySyncService : BackgroundService
     private readonly SearchHistoryCollector _history = new();
     private BlockProxy? _proxy;
     private LocalControlServer? _local;
+    private readonly PortableBrowserGuard _portableBrowsers = new();
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
@@ -25,6 +26,7 @@ public sealed class PolicySyncService : BackgroundService
         ApplyPolicy();
         _local = new LocalControlServer(() => _policy);
         _local.Start();
+        _portableBrowsers.Start();
         while (!stoppingToken.IsCancellationRequested)
         {
             await SyncOnce(stoppingToken);
@@ -146,6 +148,7 @@ public sealed class PolicySyncService : BackgroundService
     {
         _proxy?.Dispose();
         _local?.Dispose();
+        _portableBrowsers.Dispose();
         _http.Dispose();
         base.Dispose();
     }
