@@ -43,10 +43,19 @@ jobs:
           & $iscc installer/SuperWallKids.iss
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
+      - name: Verify installer
+        shell: pwsh
+        run: |
+          $installer = 'publish/installer/SuperWall-Kids-Setup-0.3.0.exe'
+          if (-not (Test-Path $installer)) { throw "Installer not found: $installer" }
+          $size = (Get-Item $installer).Length
+          if ($size -lt 1MB) { throw "Installer unexpectedly small: $size bytes" }
+          Write-Host "Installer verified: $size bytes"
+
       - name: Generate SHA256
         shell: pwsh
         run: |
-          Get-FileHash publish/installer/SuperWall-Kids-Setup-0.2.0.exe -Algorithm SHA256 |
+          Get-FileHash publish/installer/SuperWall-Kids-Setup-0.3.0.exe -Algorithm SHA256 |
             Format-Table -AutoSize |
             Out-File publish/installer/SHA256.txt
 
@@ -61,6 +70,6 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           files: |
-            publish/installer/SuperWall-Kids-Setup-0.2.0.exe
+            publish/installer/SuperWall-Kids-Setup-0.3.0.exe
             publish/installer/SHA256.txt
           generate_release_notes: true
