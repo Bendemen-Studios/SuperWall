@@ -101,7 +101,10 @@ public sealed class PolicySyncService : BackgroundService
             SavePolicy();
             ApplyPolicy();
             foreach (var command in envelope.Commands)
-                if (command.Type.Equals("request_history", StringComparison.OrdinalIgnoreCase)) await UploadHistory(ct);
+            {
+                if (!command.Type.Equals("request_history", StringComparison.OrdinalIgnoreCase)) continue;
+                await UploadHistory(command.Id, ct);
+            }
         }
         catch { /* offline-first: retain the last known-good policy */ }
     }
@@ -152,13 +155,20 @@ public sealed class PolicySyncService : BackgroundService
 
     private bool IsBlocked(string host) => _policy.BlockedDomains.Any(d => host.Equals(d, StringComparison.OrdinalIgnoreCase) || host.EndsWith("." + d, StringComparison.OrdinalIgnoreCase));
 
-    private async Task UploadHistory(CancellationToken ct)
+    private async Task UploadHistory(string requestId, CancellationToken ct)
     {
-        if (!_policy.SearchHistoryEnabled || string.IsNullOrWhiteSpace(_dashboard) || string.IsNullOrWhiteSpace(_agentToken)) return;
+        if (!_policy.SearchHistoryEnabled || string.IsNullOrWhiteSpace(_dashboard) || string.IsNullOrWhiteSpace(_agentToken) || string.IsNullOrWhiteSpace(requestId)) return;
         var records = _history.Collect(_policy.SearchHistoryRetentionDays);
-        if (records.Count == 0) return;
+        if (records.Count == 0)
+        {
+            using var empty = new HttpRequestMessage(HttpMethod.Post, $"{_dashboard.TrimEnd('/')}/api/agent/{Uri.EscapeDataString(_deviceId)}/history")
+            { Content = JsonContent.Create(new HistoryUpload { DeviceId = _deviceId, RequestId = requestId }) };
+            empty.Headers.Add("X-SuperWall-Agent", _agentToken);
+            await _http.SendAsync(empty, ct);
+            return;
+        }
         using var request = new HttpRequestMessage(HttpMethod.Post, $"{_dashboard.TrimEnd('/')}/api/agent/{Uri.EscapeDataString(_deviceId)}/history")
-        { Content = JsonContent.Create(new HistoryUpload { DeviceId = _deviceId, Records = records }) };
+        { Content = JsonContent.Create(new HistoryUpload { DeviceId = _deviceId, RequestId = requestId, Records = records }) };
         request.Headers.Add("X-SuperWall-Agent", _agentToken);
         await _http.SendAsync(request, ct);
     }
