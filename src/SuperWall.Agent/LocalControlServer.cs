@@ -41,7 +41,7 @@ public sealed class LocalControlServer : IDisposable
         try
         {
             if (ctx.User?.Identity is not WindowsIdentity identity || !identity.IsAuthenticated) return false;
-            using var principal = new WindowsPrincipal(identity);
+            var principal = new WindowsPrincipal(identity);
             return principal.IsInRole(WindowsBuiltInRole.Administrator);
         }
         catch { return false; }
