@@ -1,20 +1,21 @@
-using System.Text.Json.Serialization;
-
 namespace SuperWall.Contracts;
 
 public enum RiskProfile { Low, High }
 
 public sealed class SuperWallPolicy
 {
-    public int Version { get; set; } = 1;
+    public long Version { get; set; } = 1;
     public RiskProfile Profile { get; set; } = RiskProfile.Low;
     public bool UrlBlockingEnabled { get; set; } = true;
     public List<string> BlockedDomains { get; set; } = new() { "tiktok.com", "youtube.com", "roblox.com", "pornhub.com" };
     public bool SearchHistoryEnabled { get; set; } = true;
     public int SearchHistoryRetentionDays => Profile == RiskProfile.High ? 365 : 30;
     public bool DownloadsBlocked { get; set; } = true;
-    public string DownloadOverridePin { get; set; } = "2003";
+    public string DownloadPinHash { get; set; } = "";
+    public string DownloadPinSalt { get; set; } = "";
     public string DashboardUrl { get; set; } = "";
+    public bool LockBrowserInstallation { get; set; } = true;
+    public bool BlockPortableBrowsers { get; set; } = true;
 }
 
 public sealed class DeviceInfo
@@ -52,4 +53,10 @@ public sealed class PolicyEnvelope
 {
     public SuperWallPolicy Policy { get; set; } = new();
     public List<AdminCommand> Commands { get; set; } = new();
+}
+
+public sealed class EnrollResponse
+{
+    public string AgentToken { get; set; } = "";
+    public SuperWallPolicy Policy { get; set; } = new();
 }
