@@ -8,6 +8,7 @@ namespace SuperWall.Agent;
 public sealed class PolicySyncService : BackgroundService
 {
     private readonly string _stateDir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData), "SuperWall");
+    private const string EnrollmentFileName = "enrollment.key";
     private readonly HttpClient _http = new() { Timeout = TimeSpan.FromSeconds(15) };
     private SuperWallPolicy _policy = new();
     private string _deviceId = "";
@@ -63,6 +64,23 @@ public sealed class PolicySyncService : BackgroundService
         return id;
     }
 
+    private string? LoadEnrollmentKey()
+    {
+        try
+        {
+            var file = Path.Combine(_stateDir, EnrollmentFileName);
+            if (!File.Exists(file)) return null;
+            return File.ReadAllText(file).Trim();
+        }
+        catch { return null; }
+    }
+
+    private void ConsumeEnrollmentKey()
+    {
+        try { File.Delete(Path.Combine(_stateDir, EnrollmentFileName)); } catch { }
+        try { Environment.SetEnvironmentVariable("SUPERWALL_ENROLLMENT_KEY", null, EnvironmentVariableTarget.Machine); } catch { }
+    }
+
     private async Task SyncOnce(CancellationToken ct)
     {
         if (string.IsNullOrWhiteSpace(_dashboard)) return;
@@ -89,7 +107,7 @@ public sealed class PolicySyncService : BackgroundService
 
     private async Task Enroll(CancellationToken ct)
     {
-        var enrollmentKey = Environment.GetEnvironmentVariable("SUPERWALL_ENROLLMENT_KEY");
+        var enrollmentKey = LoadEnrollmentKey();
         if (string.IsNullOrWhiteSpace(enrollmentKey)) return;
         using var request = new HttpRequestMessage(HttpMethod.Post, $"{_dashboard.TrimEnd('/')}/api/enroll/{Uri.EscapeDataString(_deviceId)}");
         request.Headers.Add("X-SuperWall-Enrollment", enrollmentKey);
@@ -103,7 +121,7 @@ public sealed class PolicySyncService : BackgroundService
         _policy = result.Policy ?? new();
         EnsureDefaultPin();
         SavePolicy();
-        Environment.SetEnvironmentVariable("SUPERWALL_ENROLLMENT_KEY", null, EnvironmentVariableTarget.Machine);
+        ConsumeEnrollmentKey();
     }
 
     private void SavePolicy()
