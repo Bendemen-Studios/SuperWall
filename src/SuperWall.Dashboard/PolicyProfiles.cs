@@ -36,6 +36,24 @@ public static class PolicyProfiles
         cmd.ExecuteNonQuery();
     }
 
+    public static SuperWallPolicy BuildEffective(SqliteConnection c, RiskProfile profile, SuperWallPolicy? overridePolicy = null)
+    {
+        var central = Get(c, profile);
+        if (overridePolicy is null) return central;
+        overridePolicy.Profile = profile;
+        overridePolicy.Version = Math.Max(overridePolicy.Version, central.Version);
+        overridePolicy.UrlBlockingEnabled = central.UrlBlockingEnabled;
+        overridePolicy.BlockedDomains = new List<string>(central.BlockedDomains);
+        overridePolicy.SearchHistoryEnabled = central.SearchHistoryEnabled;
+        overridePolicy.DownloadsBlocked = central.DownloadsBlocked;
+        overridePolicy.DownloadPinHash = central.DownloadPinHash;
+        overridePolicy.DownloadPinSalt = central.DownloadPinSalt;
+        overridePolicy.LockBrowserInstallation = central.LockBrowserInstallation;
+        overridePolicy.BlockPortableBrowsers = central.BlockPortableBrowsers;
+        overridePolicy.DashboardUrl = central.DashboardUrl;
+        return overridePolicy;
+    }
+
     private static void Ensure(SqliteConnection c, RiskProfile profile)
     {
         using var cmd = c.CreateCommand();
