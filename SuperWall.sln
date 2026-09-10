@@ -1,0 +1,26 @@
+Microsoft Visual Studio Solution File, Format Version 12.00
+# Visual Studio Version 17
+VisualStudioVersion = 17.0.31903.59
+MinimumVisualStudioVersion = 10.0.40219.1
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "SuperWall.Contracts", "src\SuperWall.Contracts\SuperWall.Contracts.csproj", "{8A8B15DB-9052-4C75-8AA8-06DCC2C7C810}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "SuperWall.Agent", "src\SuperWall.Agent\SuperWall.Agent.csproj", "{BB1DBD3F-7CC8-44D8-A8C7-4B98DD55AFB1}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "SuperWall.Dashboard", "src\SuperWall.Dashboard\SuperWall.Dashboard.csproj", "{CBA3C8A5-B17C-4989-8F0C-1F5A6D4B5F27}"
+EndProject
+Global
+	GlobalSection(SolutionConfigurationPlatforms) = preSolution
+		Debug|Any CPU = Debug|Any CPU
+		Release|Any CPU = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{8A8B15DB-9052-4C75-8AA8-06DCC2C7C810}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{8A8B15DB-9052-4C75-8AA8-06DCC2C7C810}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{8A8B15DB-9052-4C75-8AA8-06DCC2C7C810}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{8A8B15DB-9052-4C75-8AA8-06DCC2C7C810}.Release|Any CPU.Build.0 = Release|Any CPU
+		{BB1DBD3F-7CC8-44D8-A8C7-4B98DD55AFB1}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{BB1DBD3F-7CC8-44D8-A8C7-4B98DD55AFB1}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{BB1DBD3F-7CC8-44D8-A8C7-4B98DD55AFB1}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{BB1DBD3F-7CC8-44D8-A8C7-4B98DD55AFB1}.Release|Any CPU.Build.0 = Release|Any CPU
+	EndGlobalSection
+EndGlobal
