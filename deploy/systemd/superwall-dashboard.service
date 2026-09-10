@@ -15,8 +15,13 @@ RestartSec=5
 TimeoutStopSec=20
 NoNewPrivileges=true
 PrivateTmp=true
-ProtectSystem=strict
+
+# The deployment may run inside VPS/container environments where systemd
+# mount/user namespaces are unavailable. Keep filesystem permissions as the
+# primary boundary rather than relying on namespace-based sandboxing.
+ProtectSystem=full
 ProtectHome=true
+ReadWritePaths=/opt/superwall/current/data
 ReadWritePaths=/var/lib/superwall
 ReadWritePaths=/var/log/superwall
 
