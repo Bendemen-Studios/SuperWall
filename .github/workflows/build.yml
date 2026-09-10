@@ -1,4 +1,5 @@
 name: build
+
 on:
   push:
   pull_request:
@@ -13,3 +14,12 @@ jobs:
           dotnet-version: '8.0.x'
       - run: dotnet restore SuperWall.sln
       - run: dotnet build SuperWall.sln --configuration Release --no-restore
+      - name: Check for committed secrets
+        shell: pwsh
+        run: |
+          $bad = Select-String -Path . -Pattern 'change-me|SUPERWALL_AGENT_TOKEN.*=' -SimpleMatch -List -ErrorAction SilentlyContinue |
+            Where-Object { $_.Path -notmatch '\\bin\\|\\obj\\' }
+          if ($bad) {
+            $bad | ForEach-Object { Write-Error "Potential secret/default credential in $($_.Path):$($_.LineNumber)" }
+            exit 1
+          }

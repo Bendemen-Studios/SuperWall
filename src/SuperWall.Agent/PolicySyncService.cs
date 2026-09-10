@@ -1,6 +1,7 @@
 using System.Net.Http.Json;
 using System.Security.Cryptography;
 using System.Text.Json;
+using Microsoft.Extensions.Hosting;
 using SuperWall.Contracts;
 
 namespace SuperWall.Agent;
@@ -8,6 +9,7 @@ namespace SuperWall.Agent;
 public sealed class PolicySyncService : BackgroundService
 {
     private readonly string _stateDir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData), "SuperWall");
+    private const string EnrollmentFileName = "enrollment.key";
     private readonly HttpClient _http = new() { Timeout = TimeSpan.FromSeconds(15) };
     private SuperWallPolicy _policy = new();
     private string _deviceId = "";
@@ -16,17 +18,21 @@ public sealed class PolicySyncService : BackgroundService
     private readonly SearchHistoryCollector _history = new();
     private BlockProxy? _proxy;
     private LocalControlServer? _local;
+    private readonly PortableBrowserGuard _portableBrowsers = new();
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
         Directory.CreateDirectory(_stateDir);
+        SecurityHardening.Apply();
         LoadCached();
         ApplyPolicy();
-        _local = new LocalControlServer();
+        _local = new LocalControlServer(() => _policy);
         _local.Start();
+        _portableBrowsers.Start();
         while (!stoppingToken.IsCancellationRequested)
         {
             await SyncOnce(stoppingToken);
+            SecurityHardening.Apply();
             await Task.Delay(TimeSpan.FromSeconds(60), stoppingToken);
         }
     }
@@ -59,6 +65,23 @@ public sealed class PolicySyncService : BackgroundService
         return id;
     }
 
+    private string? LoadEnrollmentKey()
+    {
+        try
+        {
+            var file = Path.Combine(_stateDir, EnrollmentFileName);
+            if (!File.Exists(file)) return null;
+            return File.ReadAllText(file).Trim();
+        }
+        catch { return null; }
+    }
+
+    private void ConsumeEnrollmentKey()
+    {
+        try { File.Delete(Path.Combine(_stateDir, EnrollmentFileName)); } catch { }
+        try { Environment.SetEnvironmentVariable("SUPERWALL_ENROLLMENT_KEY", null, EnvironmentVariableTarget.Machine); } catch { }
+    }
+
     private async Task SyncOnce(CancellationToken ct)
     {
         if (string.IsNullOrWhiteSpace(_dashboard)) return;
@@ -80,12 +103,12 @@ public sealed class PolicySyncService : BackgroundService
             foreach (var command in envelope.Commands)
                 if (command.Type.Equals("request_history", StringComparison.OrdinalIgnoreCase)) await UploadHistory(ct);
         }
-        catch { /* offline-first: retain last known-good policy */ }
+        catch { /* offline-first: retain the last known-good policy */ }
     }
 
     private async Task Enroll(CancellationToken ct)
     {
-        var enrollmentKey = Environment.GetEnvironmentVariable("SUPERWALL_ENROLLMENT_KEY");
+        var enrollmentKey = LoadEnrollmentKey();
         if (string.IsNullOrWhiteSpace(enrollmentKey)) return;
         using var request = new HttpRequestMessage(HttpMethod.Post, $"{_dashboard.TrimEnd('/')}/api/enroll/{Uri.EscapeDataString(_deviceId)}");
         request.Headers.Add("X-SuperWall-Enrollment", enrollmentKey);
@@ -99,7 +122,7 @@ public sealed class PolicySyncService : BackgroundService
         _policy = result.Policy ?? new();
         EnsureDefaultPin();
         SavePolicy();
-        Environment.SetEnvironmentVariable("SUPERWALL_ENROLLMENT_KEY", null, EnvironmentVariableTarget.Machine);
+        ConsumeEnrollmentKey();
     }
 
     private void SavePolicy()
@@ -144,6 +167,8 @@ public sealed class PolicySyncService : BackgroundService
     {
         _proxy?.Dispose();
         _local?.Dispose();
+        _portableBrowsers.Dispose();
+        _http.Dispose();
         base.Dispose();
     }
 }

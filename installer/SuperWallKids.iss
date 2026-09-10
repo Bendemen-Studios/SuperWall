@@ -44,14 +44,14 @@ begin
   DashboardPage := CreateInputQueryPage(wpWelcome,
     'SuperWall Kids koppelen',
     'Centrale dashboard-server',
-    'Vul de HTTPS-adres van het SuperWall dashboard in.');
+    'Vul het HTTPS-adres van het SuperWall dashboard in.');
   DashboardPage.Add('Dashboard URL:', False);
   DashboardPage.Values[0] := 'https://';
 
   EnrollmentPage := CreateInputQueryPage(DashboardPage.ID,
     'Apparaat registreren',
     'Enrollment key',
-    'Deze bootstrap-key koppelt deze Windows-pc aan je SuperWall-installatie.');
+    'Deze eenmalige bootstrap-key koppelt deze Windows-pc aan je SuperWall-installatie.');
   EnrollmentPage.Add('Enrollment key:', True);
 end;
 
@@ -78,7 +78,7 @@ end;
 
 procedure CurStepChanged(CurStep: TSetupStep);
 var
-  DashboardUrl, EnrollmentKey, AgentPath: string;
+  DashboardUrl, EnrollmentKey, AgentPath, EnrollmentFile: string;
   ResultCode: Integer;
 begin
   if CurStep <> ssPostInstall then Exit;
@@ -86,13 +86,16 @@ begin
   DashboardUrl := DashboardPage.Values[0];
   EnrollmentKey := EnrollmentPage.Values[0];
   AgentPath := ExpandConstant('{app}\{#MyExeName}');
+  EnrollmentFile := ExpandConstant('{commonappdata}\SuperWall\enrollment.key');
 
   RegWriteStringValue(HKEY_LOCAL_MACHINE,
     'SYSTEM\CurrentControlSet\Control\Session Manager\Environment',
     'SUPERWALL_DASHBOARD', DashboardUrl);
-  RegWriteStringValue(HKEY_LOCAL_MACHINE,
-    'SYSTEM\CurrentControlSet\Control\Session Manager\Environment',
-    'SUPERWALL_ENROLLMENT_KEY', EnrollmentKey);
+
+  SaveStringToFile(EnrollmentFile, EnrollmentKey, False);
+  Exec(ExpandConstant('{sysnative}\icacls.exe'),
+    '"' + EnrollmentFile + '" /inheritance:r /grant:r "SYSTEM:(F)" "Administrators:(F)"',
+    '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
 
   Exec(ExpandConstant('{sysnative}\sc.exe'),
     'delete SuperWallAgent', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
