@@ -39,6 +39,7 @@ public sealed class HistoryRecord
 public sealed class HistoryUpload
 {
     public string DeviceId { get; set; } = "";
+    public string RequestId { get; set; } = "";
     public List<HistoryRecord> Records { get; set; } = new();
 }
 
