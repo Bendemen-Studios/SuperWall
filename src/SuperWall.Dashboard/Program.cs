@@ -6,7 +6,7 @@ using Microsoft.Data.Sqlite;
 using SuperWall.Contracts;
 
 var builder = WebApplication.CreateBuilder(args);
-var bind = Environment.GetEnvironmentVariable("SUPERWALL_BIND") ?? "http://0.0.0.0:5080";
+var bind = Environment.GetEnvironmentVariable("SUPERWALL_BIND") ?? "http://0.0.0.0:7080";
 builder.WebHost.UseUrls(bind);
 var app = builder.Build();
 
