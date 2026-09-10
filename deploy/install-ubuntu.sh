@@ -14,11 +14,11 @@ fi
 
 export DEBIAN_FRONTEND=noninteractive
 apt-get update
-apt-get install -y ca-certificates curl git nginx certbot python3-certbot-nginx openssl
+apt-get install -y ca-certificates curl git nginx certbot python3-certbot-nginx openssl gnupg
 
 if ! command -v dotnet >/dev/null 2>&1 || ! dotnet --list-sdks | grep -q '^8\.'; then
   install -d /etc/apt/keyrings
-  curl -fsSL https://packages.microsoft.com/keys/microsoft.asc | gpg --dearmor -o /etc/apt/keyrings/microsoft.gpg
+  curl -fsSL https://packages.microsoft.com/keys/microsoft.asc | gpg --dearmor --yes -o /etc/apt/keyrings/microsoft.gpg
   chmod a+r /etc/apt/keyrings/microsoft.gpg
   echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/microsoft.gpg] https://packages.microsoft.com/ubuntu/24.04/prod noble main" > /etc/apt/sources.list.d/microsoft-prod.list
   apt-get update
@@ -64,24 +64,55 @@ fi
 ln -sfn "$DATA_ROOT" "$APP_ROOT/data"
 
 install -m 0644 deploy/systemd/superwall-dashboard.service /etc/systemd/system/superwall-dashboard.service
-install -m 0644 deploy/nginx/superwall.hvmc.nl.conf /etc/nginx/sites-available/superwall.hvmc.nl.conf
-ln -sfn /etc/nginx/sites-available/superwall.hvmc.nl.conf /etc/nginx/sites-enabled/superwall.hvmc.nl.conf
 rm -f /etc/nginx/sites-enabled/default
 
+# First configure Nginx as HTTP-only so nginx -t succeeds before a certificate exists.
+cat > /etc/nginx/sites-available/superwall.hvmc.nl.conf <<'NGINX_BOOTSTRAP'
+server {
+    listen 80;
+    listen [::]:80;
+    server_name superwall.hvmc.nl;
+
+    location /.well-known/acme-challenge/ {
+        root /var/www/certbot;
+    }
+
+    location / {
+        proxy_pass http://127.0.0.1:7080;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto http;
+        proxy_set_header X-Forwarded-Host $host;
+        proxy_set_header Connection "";
+    }
+}
+NGINX_BOOTSTRAP
+
+ln -sfn /etc/nginx/sites-available/superwall.hvmc.nl.conf /etc/nginx/sites-enabled/superwall.hvmc.nl.conf
 nginx -t
 systemctl daemon-reload
 systemctl enable --now superwall-dashboard
 systemctl enable --now nginx
 
-if getent ahosts "$DOMAIN" >/dev/null 2>&1; then
-  echo "DNS for $DOMAIN resolves. Requesting HTTPS certificate..."
-  certbot --nginx -d "$DOMAIN" --non-interactive --agree-tos --register-unsafely-without-email --redirect || true
-else
-  echo "DNS for $DOMAIN does not resolve yet. Point it at this server, then run:"
+if ! getent ahosts "$DOMAIN" >/dev/null 2>&1; then
+  echo "DNS for $DOMAIN does not resolve yet. Point it to this server, then run:"
   echo "  certbot --nginx -d $DOMAIN --redirect"
+  systemctl --no-pager --full status superwall-dashboard || true
+  exit 0
 fi
 
-systemctl restart nginx
+certbot certonly --webroot -w /var/www/certbot -d "$DOMAIN" --non-interactive --agree-tos --register-unsafely-without-email
+
+# Replace bootstrap HTTP config with the production HTTPS config from the repository.
+install -m 0644 "$WORKDIR/repo/deploy/nginx/superwall.hvmc.nl.conf" /etc/nginx/sites-available/superwall.hvmc.nl.conf
+nginx -t
+systemctl reload nginx
+
+# Test certificate renewal configuration without changing the live certificate.
+certbot renew --dry-run
+
 systemctl --no-pager --full status superwall-dashboard || true
 
 echo
