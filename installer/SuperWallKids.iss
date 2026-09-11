@@ -96,15 +96,10 @@ end;
 
 procedure CurStepChanged(CurStep: TSetupStep);
 var
-  DashboardUrl, EnrollmentKey, AgentPath, EnrollmentFile, DashboardFile, TargetUserFile, AppDir, CommonDir, TargetUser: string;
-  ResultCode: Integer;
+  DashboardUrl, EnrollmentKey, AgentPath, EnrollmentFile, DashboardFile, TargetUserFile, CommonDir, TargetUser: string;
 begin
-  if CurStep <> ssInstall then Exit;
-
-  { Stop the existing service before Inno replaces SuperWall.Agent.exe.
-    This is required for reliable upgrades when the previous agent still has
-    the executable open. }
-  if IsUpgrade then
+  { Stop the existing service before Inno replaces SuperWall.Agent.exe. }
+  if (CurStep = ssInstall) and IsUpgrade then
   begin
     RunHidden(ExpandConstant('{sysnative}\sc.exe'), 'stop SuperWallAgent');
     Sleep(1500);
@@ -113,7 +108,6 @@ begin
   if CurStep <> ssPostInstall then Exit;
 
   AgentPath := ExpandConstant('{app}\{#MyExeName}');
-  AppDir := ExpandConstant('{app}');
   CommonDir := ExpandConstant('{commonappdata}\SuperWall');
   EnrollmentFile := CommonDir + '\enrollment.key';
   DashboardFile := CommonDir + '\dashboard.url';
@@ -129,8 +123,7 @@ begin
     SaveStringToFile(DashboardFile, DashboardUrl, False);
     SaveStringToFile(EnrollmentFile, EnrollmentKey, False);
 
-    { The bootstrapper records the interactive account before UAC elevation.
-      Prefer that value over the elevated installer username. }
+    { The bootstrapper records the interactive account before UAC elevation. }
     TargetUser := GetEnv('SUPERWALL_TARGET_USER');
     if Trim(TargetUser) = '' then
       TargetUser := ExpandConstant('{username}');
