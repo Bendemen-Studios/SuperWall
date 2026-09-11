@@ -209,17 +209,13 @@ public sealed class PolicySyncService : BackgroundService
         DownloadGuard.SetEnabled(_policy.DownloadsBlocked, _policy);
         _lastAppliedPolicyVersion = _policy.Version;
 
-        // Chromium/Edge read enterprise URLBlocklist and proxy policy when the
-        // browser starts. Restart only when the effective policy actually
-        // changes (never every 60-second sync), so changes take effect
-        // immediately instead of requiring the child to close the browser.
         if (policyChanged)
             RestartManagedBrowsers();
     }
 
     private static void RestartManagedBrowsers()
     {
-        foreach (var name in new[] { "msedge", "chrome" })
+        foreach (var name in new[] { "msedge", "chrome", "brave", "vivaldi", "opera" })
         {
             try
             {
