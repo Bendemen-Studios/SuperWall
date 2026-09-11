@@ -22,8 +22,10 @@ public static class BrowserPolicy
         Set(path, "BackgroundModeEnabled", 0);
         Set(path, "ExtensionInstallBlocklist", new[] { "*" });
 
-        if (policy.DownloadsBlocked) Set(path, "DownloadRestrictions", 3);
-        else Delete(path, "DownloadRestrictions");
+        // Explicitly set 0 when downloads are allowed. Deleting the policy is
+        // not enough on every Chromium/Windows policy refresh path and could
+        // leave a previously enforced DownloadRestrictions=3 active.
+        Set(path, "DownloadRestrictions", policy.DownloadsBlocked ? 3 : 0);
 
         if (policy.UrlBlockingEnabled)
         {
