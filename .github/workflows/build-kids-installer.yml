@@ -54,14 +54,14 @@ jobs:
       - name: Verify installer
         shell: pwsh
         run: |
-          $installer = 'publish/installer/SuperWall-Kids-Setup-0.4.5.exe'
+          $installer = 'publish/installer/SuperWall-Kids-Setup-0.4.4.exe'
           if (-not (Test-Path $installer)) { throw "Installer not found: $installer" }
           if ((Get-Item $installer).Length -lt 1MB) { throw 'Installer unexpectedly small.' }
 
       - name: Generate SHA256
         shell: pwsh
         run: |
-          (Get-FileHash publish/installer/SuperWall-Kids-Setup-0.4.5.exe -Algorithm SHA256).Hash | Out-File publish/installer/SHA256.txt
+          (Get-FileHash publish/installer/SuperWall-Kids-Setup-0.4.4.exe -Algorithm SHA256).Hash | Out-File publish/installer/SHA256.txt
 
       - name: Upload installer artifact
         uses: actions/upload-artifact@v4
@@ -73,12 +73,12 @@ jobs:
         if: startsWith(github.ref, 'refs/tags/kids-v') || github.event_name == 'workflow_dispatch'
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: kids-v0.4.5
+          tag_name: kids-v0.4.4
           files: |
-            publish/installer/SuperWall-Kids-Setup-0.4.5.exe
+            publish/installer/SuperWall-Kids-Setup-0.4.4.exe
             publish/installer/SHA256.txt
           body: |
-            ## SuperWall Kids 0.4.5
+            ## SuperWall Kids 0.4.4
 
             Windows client installer for SuperWall.
 
@@ -91,7 +91,6 @@ jobs:
             - Browser enforcement remains scoped to the enrolled Windows account
             - Removes legacy machine-wide SuperWall browser policies during upgrade
             - Secure automatic update checks every 6 hours
-            - SHA256 verification before installation
             - Self-contained Windows x64 agent
           generate_release_notes: false
           draft: false
