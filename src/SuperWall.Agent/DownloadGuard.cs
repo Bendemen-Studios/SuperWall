@@ -39,11 +39,6 @@ public static class DownloadGuard
             {
                 foreach (var file in Directory.EnumerateFiles(downloads).Where(IsLikelyDownload))
                 {
-                    // The centrally managed Kids installer must remain downloadable so
-                    // an existing client can be upgraded. All other downloads are still
-                    // quarantined while download blocking is enabled.
-                    if (IsSuperWallInstaller(file)) continue;
-
                     var quarantine = Path.Combine(StateDir, "Quarantine");
                     Directory.CreateDirectory(quarantine);
                     var target = Path.Combine(quarantine, Path.GetFileName(file));
@@ -72,13 +67,6 @@ public static class DownloadGuard
         && !path.EndsWith(".part", StringComparison.OrdinalIgnoreCase)
         && !path.EndsWith(".tmp", StringComparison.OrdinalIgnoreCase)
         && !path.EndsWith(".download", StringComparison.OrdinalIgnoreCase);
-
-    private static bool IsSuperWallInstaller(string path)
-    {
-        var name = Path.GetFileName(path);
-        return name.StartsWith("SuperWall-Kids-Setup-", StringComparison.OrdinalIgnoreCase)
-            && name.EndsWith(".exe", StringComparison.OrdinalIgnoreCase);
-    }
 
     private static void DeleteState()
     {
