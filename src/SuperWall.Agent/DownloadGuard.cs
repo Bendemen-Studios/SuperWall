@@ -1,4 +1,3 @@
-using System.Text.Json;
 using SuperWall.Contracts;
 
 namespace SuperWall.Agent;
@@ -7,7 +6,6 @@ public static class DownloadGuard
 {
     private static Timer? _timer;
     private static bool _enabled;
-    private static DateTimeOffset _unlockedUntilUtc = DateTimeOffset.MinValue;
     private static readonly object Gate = new();
     private static readonly string StateDir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData), "SuperWall");
 
@@ -16,7 +14,6 @@ public static class DownloadGuard
         lock (Gate)
         {
             _enabled = enabled;
-            if (!enabled) _unlockedUntilUtc = DateTimeOffset.MinValue;
         }
 
         _timer?.Dispose();
@@ -24,51 +21,14 @@ public static class DownloadGuard
         if (!enabled) DeleteState();
     }
 
-    public static bool Unlock(string pin, SuperWallPolicy policy)
+    public static bool IsEnabled()
     {
-        lock (Gate)
-        {
-            if (!_enabled || !PinSecurity.Verify(pin, policy.DownloadPinHash, policy.DownloadPinSalt)) return false;
-            _unlockedUntilUtc = DateTimeOffset.UtcNow.AddMinutes(10);
-            PersistUnlockState(_unlockedUntilUtc);
-        }
-
-        // Browser enforcement is relaxed only for this short-lived in-memory window.
-        var unlockedPolicy = new SuperWallPolicy
-        {
-            Version = policy.Version,
-            Profile = policy.Profile,
-            UrlBlockingEnabled = policy.UrlBlockingEnabled,
-            BlockedDomains = new List<string>(policy.BlockedDomains),
-            SearchHistoryEnabled = policy.SearchHistoryEnabled,
-            DownloadsBlocked = false,
-            DownloadPinHash = policy.DownloadPinHash,
-            DownloadPinSalt = policy.DownloadPinSalt,
-            DashboardUrl = policy.DashboardUrl,
-            LockBrowserInstallation = policy.LockBrowserInstallation,
-            BlockPortableBrowsers = policy.BlockPortableBrowsers
-        };
-        BrowserPolicy.Apply(unlockedPolicy);
-        return true;
-    }
-
-    public static bool IsUnlocked()
-    {
-        lock (Gate)
-        {
-            if (_unlockedUntilUtc <= DateTimeOffset.UtcNow)
-            {
-                _unlockedUntilUtc = DateTimeOffset.MinValue;
-                return false;
-            }
-            return true;
-        }
+        lock (Gate) return _enabled;
     }
 
     private static void Sweep(SuperWallPolicy policy)
     {
-        if (!_enabled) return;
-        if (IsUnlocked()) return;
+        if (!IsEnabled()) return;
 
         BrowserPolicy.Apply(policy);
         DeleteState();
@@ -107,19 +67,6 @@ public static class DownloadGuard
         && !path.EndsWith(".part", StringComparison.OrdinalIgnoreCase)
         && !path.EndsWith(".tmp", StringComparison.OrdinalIgnoreCase)
         && !path.EndsWith(".download", StringComparison.OrdinalIgnoreCase);
-
-    private static void PersistUnlockState(DateTimeOffset expires)
-    {
-        try
-        {
-            Directory.CreateDirectory(StateDir);
-            var path = Path.Combine(StateDir, "download-unlocked.json");
-            var temp = path + ".tmp";
-            File.WriteAllText(temp, JsonSerializer.Serialize(new { expiresUtc = expires }));
-            File.Move(temp, path, true);
-        }
-        catch { }
-    }
 
     private static void DeleteState()
     {
