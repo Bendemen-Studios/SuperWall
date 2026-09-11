@@ -31,6 +31,7 @@ CREATE TABLE IF NOT EXISTS enrollment_keys(id TEXT PRIMARY KEY, label TEXT NOT N
     EnsureColumn(c, "devices", "agent_token_hash", "TEXT");
     EnsureColumn(c, "history", "request_id", "TEXT");
     PolicyProfiles.EnsureSchema(c);
+    GlobalPolicyStore.EnsureSchema(c);
 }
 
 if (string.IsNullOrWhiteSpace(adminPassword)) throw new InvalidOperationException("SUPERWALL_ADMIN_PASSWORD must be configured.");
@@ -98,6 +99,16 @@ app.MapGet("/api/devices", (HttpRequest req) =>
     return Results.Ok(list);
 });
 
+app.MapGet("/api/admin/global-policy", (HttpRequest req) =>
+{
+    if (!IsAdmin(req)) return Results.Unauthorized(); using var c = new SqliteConnection($"Data Source={db}"); c.Open(); return Results.Ok(GlobalPolicyStore.Get(c));
+});
+
+app.MapPut("/api/admin/global-policy", async (HttpRequest req) =>
+{
+    if (!IsAdmin(req)) return Results.Unauthorized(); using var c = new SqliteConnection($"Data Source={db}"); c.Open(); var current = GlobalPolicyStore.Get(c); var policy = await JsonSerializer.DeserializeAsync<SuperWallPolicy>(req.Body) ?? current; policy.Version = Math.Max(current.Version + 1, policy.Version); policy.Profile = RiskProfile.Low; policy.DashboardUrl = "https://superwall.hvmc.nl"; GlobalPolicyStore.Set(c, policy); return Results.Ok(policy);
+});
+
 app.MapGet("/api/admin/profiles", (HttpRequest req) =>
 {
     if (!IsAdmin(req)) return Results.Unauthorized(); using var c = new SqliteConnection($"Data Source={db}"); c.Open(); return Results.Ok(new[] { PolicyProfiles.Get(c, RiskProfile.Low), PolicyProfiles.Get(c, RiskProfile.High) });
@@ -115,19 +126,19 @@ app.MapPut("/api/admin/profiles/{profile}", async (string profile, HttpRequest r
 
 app.MapPut("/api/devices/{id}/profile", async (string id, HttpRequest req) =>
 {
-    if (!IsAdmin(req)) return Results.Unauthorized(); var body = await JsonSerializer.DeserializeAsync<Dictionary<string,string>>(req.Body) ?? new(); if (!body.TryGetValue("profile", out var raw) || !Enum.TryParse<RiskProfile>(raw, true, out var profile)) return Results.BadRequest(new { error = "Invalid profile" }); using var c = new SqliteConnection($"Data Source={db}"); c.Open(); var central = PolicyProfiles.Get(c, profile); var current = GetPolicy(c, id); current.Profile = profile; current.Version = Math.Max(current.Version + 1, central.Version + 1); current.BlockedDomains = new List<string>(central.BlockedDomains); current.UrlBlockingEnabled = central.UrlBlockingEnabled; current.SearchHistoryEnabled = central.SearchHistoryEnabled; current.DownloadsBlocked = central.DownloadsBlocked; current.DownloadPinHash = central.DownloadPinHash; current.DownloadPinSalt = central.DownloadPinSalt; current.LockBrowserInstallation = central.LockBrowserInstallation; current.BlockPortableBrowsers = central.BlockPortableBrowsers; current.DashboardUrl = central.DashboardUrl; UpsertPolicy(c, id, current); return Results.Ok(current);
+    if (!IsAdmin(req)) return Results.Unauthorized(); var body = await JsonSerializer.DeserializeAsync<Dictionary<string,string>>(req.Body) ?? new(); if (!body.TryGetValue("profile", out var raw) || !Enum.TryParse<RiskProfile>(raw, true, out var profile)) return Results.BadRequest(new { error = "Invalid profile" }); using var c = new SqliteConnection($"Data Source={db}"); c.Open(); var central = PolicyProfiles.Get(c, profile); var current = GetDevicePolicy(c, id); current.Profile = profile; current.Version = Math.Max(current.Version + 1, central.Version + 1); current.BlockedDomains = new List<string>(central.BlockedDomains); current.UrlBlockingEnabled = central.UrlBlockingEnabled; current.SearchHistoryEnabled = central.SearchHistoryEnabled; current.DownloadsBlocked = central.DownloadsBlocked; current.DownloadPinHash = central.DownloadPinHash; current.DownloadPinSalt = central.DownloadPinSalt; current.LockBrowserInstallation = central.LockBrowserInstallation; current.BlockPortableBrowsers = central.BlockPortableBrowsers; current.DashboardUrl = central.DashboardUrl; UpsertPolicy(c, id, current); UpsertProfile(c, id, profile); return Results.Ok(GetPolicy(c, id));
 });
 
 app.MapGet("/api/devices/{id}/policy", (string id, HttpRequest req) => { if (!IsAdmin(req)) return Results.Unauthorized(); using var c = new SqliteConnection($"Data Source={db}"); c.Open(); return Results.Ok(GetPolicy(c, id)); });
 
 app.MapPut("/api/devices/{id}/policy", async (string id, HttpRequest req) =>
 {
-    if (!IsAdmin(req)) return Results.Unauthorized(); var policy = await JsonSerializer.DeserializeAsync<SuperWallPolicy>(req.Body) ?? new(); using var c = new SqliteConnection($"Data Source={db}"); c.Open(); var current = GetPolicy(c, id); policy.Version = Math.Max(current.Version + 1, policy.Version); if (string.IsNullOrWhiteSpace(policy.DownloadPinHash) || string.IsNullOrWhiteSpace(policy.DownloadPinSalt)) { policy.DownloadPinHash = current.DownloadPinHash; policy.DownloadPinSalt = current.DownloadPinSalt; } UpsertPolicy(c, id, policy); UpsertProfile(c, id, policy.Profile); return Results.Ok(policy);
+    if (!IsAdmin(req)) return Results.Unauthorized(); using var c = new SqliteConnection($"Data Source={db}"); c.Open(); var policy = await JsonSerializer.DeserializeAsync<SuperWallPolicy>(req.Body) ?? new(); var current = GetDevicePolicy(c, id); policy.Version = Math.Max(current.Version + 1, policy.Version); policy.Profile = current.Profile; if (string.IsNullOrWhiteSpace(policy.DownloadPinHash) || string.IsNullOrWhiteSpace(policy.DownloadPinSalt)) { policy.DownloadPinHash = current.DownloadPinHash; policy.DownloadPinSalt = current.DownloadPinSalt; } UpsertPolicy(c, id, policy); return Results.Ok(GetPolicy(c, id));
 });
 
 app.MapPost("/api/devices/{id}/history/request", (string id, HttpRequest req) =>
 {
-    if (!IsAdmin(req)) return Results.Unauthorized(); using var c = new SqliteConnection($"Data Source={db}"); c.Open(); using var check = c.CreateCommand(); check.CommandText = "SELECT COUNT(1) FROM commands WHERE device_id=$d AND type='request_history' AND completed=0"; check.Parameters.AddWithValue("$d", id); if (Convert.ToInt32(check.ExecuteScalar()) > 0) return Results.Conflict(new { error = "A history request is already pending for this device." }); var requestId = Guid.NewGuid().ToString("N"); using var cmd = c.CreateCommand(); cmd.CommandText = "INSERT INTO commands(id,device_id,type,created,completed) VALUES($id,$d,'request_history',$t,0)"; cmd.Parameters.AddWithValue("$id", requestId); cmd.Parameters.AddWithValue("$d", id); cmd.Parameters.AddWithValue("$t", DateTimeOffset.UtcNow.ToString("O")); cmd.ExecuteNonQuery(); return Results.Accepted(value: new { requestId });
+    if (!IsAdmin(req)) return Results.Unauthorized(); using var c = new SqliteConnection($"Data Source={db}"); c.Open(); using var check = c.CreateCommand(); check.CommandText = "SELECT id FROM commands WHERE device_id=$d AND type='request_history' AND completed=0 ORDER BY created DESC LIMIT 1"; check.Parameters.AddWithValue("$d", id); var existing = check.ExecuteScalar() as string; if (!string.IsNullOrWhiteSpace(existing)) return Results.Accepted(value: new { requestId = existing, reused = true }); var requestId = Guid.NewGuid().ToString("N"); using var cmd = c.CreateCommand(); cmd.CommandText = "INSERT INTO commands(id,device_id,type,created,completed) VALUES($id,$d,'request_history',$t,0)"; cmd.Parameters.AddWithValue("$id", requestId); cmd.Parameters.AddWithValue("$d", id); cmd.Parameters.AddWithValue("$t", DateTimeOffset.UtcNow.ToString("O")); cmd.ExecuteNonQuery(); return Results.Accepted(value: new { requestId });
 });
 
 app.MapGet("/api/devices/{id}/history", (string id, HttpRequest req) => { if (!IsAdmin(req)) return Results.Unauthorized(); using var c = new SqliteConnection($"Data Source={db}"); c.Open(); var policy = GetPolicy(c, id); using var cmd = c.CreateCommand(); cmd.CommandText = "SELECT browser,url,title,visited FROM history WHERE device_id=$d AND visited >= $from ORDER BY visited DESC LIMIT 5000"; cmd.Parameters.AddWithValue("$d", id); cmd.Parameters.AddWithValue("$from", DateTimeOffset.UtcNow.AddDays(-policy.SearchHistoryRetentionDays).ToString("O")); using var r = cmd.ExecuteReader(); var result = new List<HistoryRecord>(); while (r.Read()) result.Add(new HistoryRecord { Browser = r.GetString(0), Url = r.GetString(1), Title = r.GetString(2), VisitedUtc = DateTimeOffset.Parse(r.GetString(3)) }); return Results.Ok(result); });
@@ -151,11 +162,12 @@ app.Run();
 static string HashForCompare(string value) => Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(value)));
 static string Truncate(string value, int max) => string.IsNullOrEmpty(value) ? "" : value.Length <= max ? value : value[..max];
 static RiskProfile ParseProfile(string value) => Enum.TryParse<RiskProfile>(value, true, out var p) ? p : RiskProfile.Low;
-static SuperWallPolicy GetPolicy(SqliteConnection c, string id)
+static SuperWallPolicy GetDevicePolicy(SqliteConnection c, string id)
 {
     using var profileCmd = c.CreateCommand(); profileCmd.CommandText = "SELECT profile FROM devices WHERE device_id=$d"; profileCmd.Parameters.AddWithValue("$d", id); var profile = ParseProfile(profileCmd.ExecuteScalar() as string ?? "Low");
     using var cmd = c.CreateCommand(); cmd.CommandText = "SELECT json FROM policies WHERE device_id=$d"; cmd.Parameters.AddWithValue("$d", id); var x = cmd.ExecuteScalar() as string; return string.IsNullOrWhiteSpace(x) ? PolicyProfiles.Get(c, profile) : JsonSerializer.Deserialize<SuperWallPolicy>(x) ?? PolicyProfiles.Get(c, profile);
 }
+static SuperWallPolicy GetPolicy(SqliteConnection c, string id) => GlobalPolicyStore.Apply(GlobalPolicyStore.Get(c), GetDevicePolicy(c, id));
 static void UpsertPolicy(SqliteConnection c, string id, SuperWallPolicy p) { using var cmd = c.CreateCommand(); cmd.CommandText = "INSERT INTO policies(device_id,json) VALUES($d,$j) ON CONFLICT(device_id) DO UPDATE SET json=$j"; cmd.Parameters.AddWithValue("$d", id); cmd.Parameters.AddWithValue("$j", JsonSerializer.Serialize(p)); cmd.ExecuteNonQuery(); }
 static void UpsertProfile(SqliteConnection c, string id, RiskProfile p) { using var cmd = c.CreateCommand(); cmd.CommandText = "UPDATE devices SET profile=$p WHERE device_id=$d"; cmd.Parameters.AddWithValue("$d", id); cmd.Parameters.AddWithValue("$p", p.ToString()); cmd.ExecuteNonQuery(); }
 static void EnsureProfilePolicy(SqliteConnection c, string id, RiskProfile p) { UpsertPolicy(c, id, PolicyProfiles.Get(c, p)); }
