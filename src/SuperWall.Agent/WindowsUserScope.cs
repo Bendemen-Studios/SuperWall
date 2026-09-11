@@ -7,8 +7,8 @@ namespace SuperWall.Agent;
 /// <summary>
 /// Resolves the Windows account whose browser policy should be enforced.
 /// The agent runs as LocalSystem, so HKCU is the service account rather than
-/// the child. We therefore target the enrolled user's HKU SID hive and, when
-/// possible, prefer the currently active interactive Windows session.
+/// the child. The installer records the intended interactive account before
+/// elevation and this class treats that value as authoritative.
 /// </summary>
 public static class WindowsUserScope
 {
@@ -18,9 +18,9 @@ public static class WindowsUserScope
     private const string TargetUserFile = "target-user.txt";
     private const int ErrorSuccess = 0;
     private const int HKeyUsers = unchecked((int)0x80000003);
-    private const int WtsCurrentServerHandle = 0;
     private const int WtsUserName = 5;
     private static bool _loadedByUs;
+    private static string? _resolvedTargetUser;
 
     [DllImport("advapi32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
     private static extern int RegLoadKey(IntPtr hKey, string lpSubKey, string lpFile);
@@ -44,30 +44,59 @@ public static class WindowsUserScope
 
     public static string? TargetUserName()
     {
+        if (!string.IsNullOrWhiteSpace(_resolvedTargetUser))
+            return _resolvedTargetUser;
+
         try
         {
             var path = Path.Combine(StateDir, TargetUserFile);
             if (!File.Exists(path)) return null;
             var value = File.ReadAllText(path).Trim();
-            return string.IsNullOrWhiteSpace(value) ? null : value;
+            if (string.IsNullOrWhiteSpace(value)) return null;
+            _resolvedTargetUser = value;
+            return value;
         }
         catch { return null; }
     }
 
     public static SecurityIdentifier? TargetSid()
     {
-        // The active console account is the account actually using the local
-        // desktop. Prefer it so an administrator installing SuperWall for a
-        // child account cannot accidentally leave policies on the administrator.
-        var active = ActiveConsoleUserName();
-        var activeSid = TranslateToSid(active);
-        if (activeSid is not null)
-        {
-            PersistTargetUser(active!);
-            return activeSid;
-        }
-
+        // The installer-created target-user.txt is authoritative. Do not
+        // replace it with the currently active console account: an elevated
+        // admin installer commonly runs in the admin's context even when the
+        // policy is intended for a child account.
         return TranslateToSid(TargetUserName());
+    }
+
+    public static bool SetTargetUser(string user)
+    {
+        if (string.IsNullOrWhiteSpace(user)) return false;
+
+        var normalized = user.Trim();
+        if (normalized.Contains('\\', StringComparison.Ordinal))
+            normalized = normalized[(normalized.LastIndexOf('\\') + 1)..];
+
+        if (string.IsNullOrWhiteSpace(normalized)) return false;
+        if (TranslateToSid($"{Environment.MachineName}\\{normalized}") is null && TranslateToSid(normalized) is null)
+            return false;
+
+        try
+        {
+            Directory.CreateDirectory(StateDir);
+            File.WriteAllText(Path.Combine(StateDir, TargetUserFile), normalized);
+            _resolvedTargetUser = normalized;
+            return true;
+        }
+        catch { return false; }
+    }
+
+    public static string? ResolveInstallTargetUser()
+    {
+        // When called from an elevated installer, the original interactive
+        // account is best supplied explicitly by the bootstrapper. As a safe
+        // fallback, use the active console account.
+        var active = ActiveConsoleUserName();
+        return string.IsNullOrWhiteSpace(active) ? null : active;
     }
 
     public static RegistryKey? OpenUserPolicyKey(string relativePath, bool writable)
@@ -85,9 +114,6 @@ public static class WindowsUserScope
         catch { return null; }
     }
 
-    /// <summary>
-    /// Unloads a target profile hive only when this service loaded it itself.
-    /// </summary>
     public static void UnloadTargetHiveIfLoadedByUs()
     {
         if (!_loadedByUs) return;
@@ -109,9 +135,17 @@ public static class WindowsUserScope
         if (string.IsNullOrWhiteSpace(user)) return null;
         try
         {
-            return (SecurityIdentifier)new NTAccount(user).Translate(typeof(SecurityIdentifier));
+            if (user.Contains('\\', StringComparison.Ordinal))
+                return (SecurityIdentifier)new NTAccount(user).Translate(typeof(SecurityIdentifier));
+
+            var local = $"{Environment.MachineName}\\{user}";
+            return (SecurityIdentifier)new NTAccount(local).Translate(typeof(SecurityIdentifier));
         }
-        catch { return null; }
+        catch
+        {
+            try { return (SecurityIdentifier)new NTAccount(user).Translate(typeof(SecurityIdentifier)); }
+            catch { return null; }
+        }
     }
 
     private static string? ActiveConsoleUserName()
@@ -133,10 +167,7 @@ public static class WindowsUserScope
             {
                 var user = Marshal.PtrToStringUni(buffer)?.Trim();
                 if (string.IsNullOrWhiteSpace(user)) return null;
-
-                // WTSUserName returns only the account name. Prefix it with the
-                // local machine name so NTAccount translation is deterministic.
-                return $"{Environment.MachineName}\\{user}";
+                return user;
             }
             finally
             {
@@ -144,18 +175,6 @@ public static class WindowsUserScope
             }
         }
         catch { return null; }
-    }
-
-    private static void PersistTargetUser(string user)
-    {
-        try
-        {
-            Directory.CreateDirectory(StateDir);
-            var path = Path.Combine(StateDir, TargetUserFile);
-            if (!string.Equals(TargetUserName(), user, StringComparison.OrdinalIgnoreCase))
-                File.WriteAllText(path, user);
-        }
-        catch { }
     }
 
     private static void EnsureTargetHiveLoaded(SecurityIdentifier sid)
