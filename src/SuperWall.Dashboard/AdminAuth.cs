@@ -1,0 +1,86 @@
+using System.Net;
+using System.Net.Mail;
+using System.Security.Cryptography;
+using System.Text;
+using Microsoft.Data.Sqlite;
+
+namespace SuperWall.Dashboard;
+
+public sealed record AdminIdentity(string Id, string Username, string Email, bool IsSuperAdmin);
+
+public static class AdminAuth
+{
+    public static void EnsureSchema(SqliteConnection c, string superAdminPassword)
+    {
+        using var cmd = c.CreateCommand();
+        cmd.CommandText = @"
+CREATE TABLE IF NOT EXISTS admins(id TEXT PRIMARY KEY, username TEXT NOT NULL UNIQUE, email TEXT NOT NULL UNIQUE, password_hash TEXT NOT NULL, password_salt TEXT NOT NULL, is_super_admin INTEGER NOT NULL DEFAULT 0, enabled INTEGER NOT NULL DEFAULT 1, created_utc TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS login_challenges(id TEXT PRIMARY KEY, admin_id TEXT NOT NULL, code_hash TEXT NOT NULL, expires_utc TEXT NOT NULL, attempts INTEGER NOT NULL DEFAULT 0);";
+        cmd.ExecuteNonQuery();
+        var existing = GetByUsername(c, "bendemen");
+        if (existing is null) Create(c, "bendemen", "bendemen@localhost", superAdminPassword, true);
+        else
+        {
+            using var update = c.CreateCommand();
+            update.CommandText = "UPDATE admins SET email='bendemen@localhost', is_super_admin=1, enabled=1, password_hash=$h, password_salt=$s WHERE username='bendemen'";
+            var (hash, salt) = HashPassword(superAdminPassword); update.Parameters.AddWithValue("$h", hash); update.Parameters.AddWithValue("$s", salt); update.ExecuteNonQuery();
+        }
+    }
+
+    public static AdminIdentity? ValidatePassword(SqliteConnection c, string username, string password)
+    {
+        var row = GetRow(c, username); if (row is null || !row.Value.Enabled || !VerifyPassword(password, row.Value.PasswordHash, row.Value.PasswordSalt)) return null;
+        return new AdminIdentity(row.Value.Id, row.Value.Username, row.Value.Email, row.Value.IsSuperAdmin);
+    }
+
+    public static AdminIdentity? Get(SqliteConnection c, string id)
+    {
+        using var cmd = c.CreateCommand(); cmd.CommandText = "SELECT id,username,email,is_super_admin FROM admins WHERE id=$id AND enabled=1"; cmd.Parameters.AddWithValue("$id", id); using var r = cmd.ExecuteReader(); if (!r.Read()) return null;
+        return new AdminIdentity(r.GetString(0), r.GetString(1), r.GetString(2), r.GetInt32(3) == 1);
+    }
+
+    public static List<(string Id,string Username,string Email,bool IsSuperAdmin,bool Enabled)> List(SqliteConnection c)
+    {
+        using var cmd=c.CreateCommand(); cmd.CommandText="SELECT id,username,email,is_super_admin,enabled FROM admins ORDER BY is_super_admin DESC, username"; using var r=cmd.ExecuteReader(); var result=new List<(string,string,string,bool,bool)>();
+        while(r.Read()) result.Add((r.GetString(0),r.GetString(1),r.GetString(2),r.GetInt32(3)==1,r.GetInt32(4)==1)); return result;
+    }
+
+    public static string Create(SqliteConnection c,string username,string email,string password,bool superAdmin)
+    {
+        var id=Guid.NewGuid().ToString("N"); var (hash,salt)=HashPassword(password); using var cmd=c.CreateCommand(); cmd.CommandText="INSERT INTO admins(id,username,email,password_hash,password_salt,is_super_admin,enabled,created_utc) VALUES($i,$u,$e,$h,$s,$sa,1,$t)";
+        cmd.Parameters.AddWithValue("$i",id);cmd.Parameters.AddWithValue("$u",username.Trim());cmd.Parameters.AddWithValue("$e",email.Trim().ToLowerInvariant());cmd.Parameters.AddWithValue("$h",hash);cmd.Parameters.AddWithValue("$s",salt);cmd.Parameters.AddWithValue("$sa",superAdmin?1:0);cmd.Parameters.AddWithValue("$t",DateTimeOffset.UtcNow.ToString("O"));cmd.ExecuteNonQuery();return id;
+    }
+
+    public static void Delete(SqliteConnection c,string id){using var cmd=c.CreateCommand();cmd.CommandText="DELETE FROM admins WHERE id=$id AND is_super_admin=0";cmd.Parameters.AddWithValue("$id",id);cmd.ExecuteNonQuery();}
+
+    public static string CreateChallenge(SqliteConnection c,string adminId,string email,out DateTimeOffset expires)
+    {
+        var code=RandomNumberGenerator.GetInt32(0,1000000).ToString("D6"); expires=DateTimeOffset.UtcNow.AddMinutes(10); var id=Guid.NewGuid().ToString("N"); var hash=Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(code)));
+        using var clean=c.CreateCommand();clean.CommandText="DELETE FROM login_challenges WHERE admin_id=$a";clean.Parameters.AddWithValue("$a",adminId);clean.ExecuteNonQuery();
+        using var cmd=c.CreateCommand();cmd.CommandText="INSERT INTO login_challenges(id,admin_id,code_hash,expires_utc,attempts) VALUES($i,$a,$h,$e,0)";cmd.Parameters.AddWithValue("$i",id);cmd.Parameters.AddWithValue("$a",adminId);cmd.Parameters.AddWithValue("$h",hash);cmd.Parameters.AddWithValue("$e",expires.ToString("O"));cmd.ExecuteNonQuery();SendCode(email,code);return id;
+    }
+
+    public static bool VerifyChallenge(SqliteConnection c,string challengeId,string adminId,string code)
+    {
+        using var cmd=c.CreateCommand();cmd.CommandText="SELECT code_hash,expires_utc,attempts FROM login_challenges WHERE id=$i AND admin_id=$a";cmd.Parameters.AddWithValue("$i",challengeId);cmd.Parameters.AddWithValue("$a",adminId);using var r=cmd.ExecuteReader();if(!r.Read())return false;
+        var hash=r.GetString(0);var expires=DateTimeOffset.Parse(r.GetString(1));var attempts=r.GetInt32(2);if(expires<=DateTimeOffset.UtcNow||attempts>=5)return false;
+        var supplied=Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(code.Trim())));var ok=CryptographicOperations.FixedTimeEquals(Convert.FromHexString(hash),Convert.FromHexString(supplied));r.Close();
+        if(!ok){using var bump=c.CreateCommand();bump.CommandText="UPDATE login_challenges SET attempts=attempts+1 WHERE id=$i";bump.Parameters.AddWithValue("$i",challengeId);bump.ExecuteNonQuery();return false;}
+        using var del=c.CreateCommand();del.CommandText="DELETE FROM login_challenges WHERE id=$i";del.Parameters.AddWithValue("$i",challengeId);del.ExecuteNonQuery();return true;
+    }
+
+    private static (string Id,string Username,string Email,string PasswordHash,string PasswordSalt,bool IsSuperAdmin,bool Enabled)? GetRow(SqliteConnection c,string username)
+    {using var cmd=c.CreateCommand();cmd.CommandText="SELECT id,username,email,password_hash,password_salt,is_super_admin,enabled FROM admins WHERE lower(username)=lower($u)";cmd.Parameters.AddWithValue("$u",username.Trim());using var r=cmd.ExecuteReader();if(!r.Read())return null;return(r.GetString(0),r.GetString(1),r.GetString(2),r.GetString(3),r.GetString(4),r.GetInt32(5)==1,r.GetInt32(6)==1);}
+    private static AdminIdentity? GetByUsername(SqliteConnection c,string username){var r=GetRow(c,username);return r is null?null:new AdminIdentity(r.Value.Id,r.Value.Username,r.Value.Email,r.Value.IsSuperAdmin);}
+    private static (string Hash,string Salt) HashPassword(string password){var salt=RandomNumberGenerator.GetBytes(32);var hash=Rfc2898DeriveBytes.Pbkdf2(password,salt,150000,HashAlgorithmName.SHA256,32);return(Convert.ToHexString(hash),Convert.ToHexString(salt));}
+    private static bool VerifyPassword(string password,string hash,string salt){try{var actual=Rfc2898DeriveBytes.Pbkdf2(password,Convert.FromHexString(salt),150000,HashAlgorithmName.SHA256,32);return CryptographicOperations.FixedTimeEquals(actual,Convert.FromHexString(hash));}catch{return false;}}
+
+    private static void SendCode(string email,string code)
+    {
+        var host=Environment.GetEnvironmentVariable("SUPERWALL_SMTP_HOST");var from=Environment.GetEnvironmentVariable("SUPERWALL_SMTP_FROM");
+        if(string.IsNullOrWhiteSpace(host)||string.IsNullOrWhiteSpace(from))throw new InvalidOperationException("Email 2FA is not configured. Set SUPERWALL_SMTP_HOST and SUPERWALL_SMTP_FROM.");
+        var port=int.TryParse(Environment.GetEnvironmentVariable("SUPERWALL_SMTP_PORT"),out var p)?p:587;var user=Environment.GetEnvironmentVariable("SUPERWALL_SMTP_USER");var pass=Environment.GetEnvironmentVariable("SUPERWALL_SMTP_PASSWORD");
+        using var client=new SmtpClient(host,port){EnableSsl=!string.Equals(Environment.GetEnvironmentVariable("SUPERWALL_SMTP_TLS"),"0",StringComparison.OrdinalIgnoreCase)};if(!string.IsNullOrWhiteSpace(user))client.Credentials=new NetworkCredential(user,pass??"");
+        using var message=new MailMessage(from,email,"SuperWall login code",$"Je SuperWall verificatiecode is: {code}\n\nDeze code is 10 minuten geldig. Als jij niet probeerde in te loggen, negeer deze e-mail.");client.Send(message);
+    }
+}
