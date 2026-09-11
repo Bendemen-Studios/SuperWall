@@ -20,6 +20,7 @@ public sealed class PolicySyncService : BackgroundService
     private BlockProxy? _proxy;
     private LocalControlServer? _local;
     private readonly PortableBrowserGuard _portableBrowsers = new();
+    private AutoUpdater? _updater;
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
@@ -30,10 +31,20 @@ public sealed class PolicySyncService : BackgroundService
         _local = new LocalControlServer(() => _policy);
         _local.Start();
         _portableBrowsers.Start();
+        _updater = new AutoUpdater(_stateDir);
+        var nextUpdateCheck = DateTimeOffset.UtcNow;
+
         while (!stoppingToken.IsCancellationRequested)
         {
             await SyncOnce(stoppingToken);
             SecurityHardening.Apply();
+
+            if (DateTimeOffset.UtcNow >= nextUpdateCheck)
+            {
+                await _updater.CheckAndInstallAsync(stoppingToken);
+                nextUpdateCheck = DateTimeOffset.UtcNow.AddHours(6);
+            }
+
             await Task.Delay(TimeSpan.FromSeconds(60), stoppingToken);
         }
     }
