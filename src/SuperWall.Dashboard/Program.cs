@@ -95,6 +95,17 @@ app.MapGet("/api/devices", (HttpRequest req) =>
     while (r.Read()) { var seen = DateTimeOffset.Parse(r.GetString(4)); list.Add(new DeviceInfo { DeviceId = r.GetString(0), ComputerName = r.GetString(1), OsVersion = r.GetString(2), Profile = ParseProfile(r.GetString(3)), LastSeenUtc = seen, Online = DateTimeOffset.UtcNow - seen < TimeSpan.FromMinutes(3) }); }
     return Results.Ok(list);
 });
+app.MapDelete("/api/devices/{id}", (string id, HttpRequest req) =>
+{
+    if (!IsAdmin(req)) return Results.Unauthorized();
+    using var c = new SqliteConnection($"Data Source={db}"); c.Open(); using var tx = c.BeginTransaction();
+    foreach (var sql in new[] { "DELETE FROM history WHERE device_id=$d", "DELETE FROM commands WHERE device_id=$d", "DELETE FROM policies WHERE device_id=$d", "DELETE FROM devices WHERE device_id=$d" })
+    {
+        using var cmd = c.CreateCommand(); cmd.Transaction = tx; cmd.CommandText = sql; cmd.Parameters.AddWithValue("$d", id); cmd.ExecuteNonQuery();
+    }
+    tx.Commit();
+    return Results.Ok(new { deleted = id });
+});
 app.MapGet("/api/admin/global-policy", (HttpRequest req) => { if (!IsAdmin(req)) return Results.Unauthorized(); using var c = new SqliteConnection($"Data Source={db}"); c.Open(); return Results.Ok(GlobalPolicyStore.Get(c)); });
 app.MapPut("/api/admin/global-policy", async (HttpRequest req) => { if (!IsAdmin(req)) return Results.Unauthorized(); using var c = new SqliteConnection($"Data Source={db}"); c.Open(); var current = GlobalPolicyStore.Get(c); var p = await JsonSerializer.DeserializeAsync<SuperWallPolicy>(req.Body) ?? current; p.Version = Math.Max(current.Version + 1, p.Version); p.Profile = RiskProfile.Low; p.DashboardUrl = "https://superwall.hvmc.nl"; GlobalPolicyStore.Set(c, p); return Results.Ok(p); });
 app.MapGet("/api/admin/profiles", (HttpRequest req) => { if (!IsAdmin(req)) return Results.Unauthorized(); using var c = new SqliteConnection($"Data Source={db}"); c.Open(); return Results.Ok(new[] { PolicyProfiles.Get(c, RiskProfile.Low), PolicyProfiles.Get(c, RiskProfile.High) }); });
