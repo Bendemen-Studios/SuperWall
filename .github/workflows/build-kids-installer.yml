@@ -54,14 +54,14 @@ jobs:
       - name: Verify installer
         shell: pwsh
         run: |
-          $installer = 'publish/installer/SuperWall-Kids-Setup-0.3.0.exe'
+          $installer = 'publish/installer/SuperWall-Kids-Setup-0.4.0.exe'
           if (-not (Test-Path $installer)) { throw "Installer not found: $installer" }
           if ((Get-Item $installer).Length -lt 1MB) { throw 'Installer unexpectedly small.' }
 
       - name: Generate SHA256
         shell: pwsh
         run: |
-          (Get-FileHash publish/installer/SuperWall-Kids-Setup-0.3.0.exe -Algorithm SHA256).Hash | Out-File publish/installer/SHA256.txt
+          (Get-FileHash publish/installer/SuperWall-Kids-Setup-0.4.0.exe -Algorithm SHA256).Hash | Out-File publish/installer/SHA256.txt
 
       - name: Upload installer artifact
         uses: actions/upload-artifact@v4
@@ -74,13 +74,17 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           files: |
-            publish/installer/SuperWall-Kids-Setup-0.3.0.exe
+            publish/installer/SuperWall-Kids-Setup-0.4.0.exe
             publish/installer/SHA256.txt
           body: |
-            ## SuperWall Kids 0.3.0
+            ## SuperWall Kids 0.4.0
 
             Windows client installer for SuperWall.
 
+            - Secure automatic update checks every 6 hours
+            - Updates only to a newer stable Kids release
+            - SHA256 verification before installation
+            - Existing enrollment and local policy are preserved
             - Self-contained Windows x64 agent
             - Enrollment through SuperWall Central Dashboard
             - Default Low Risk profile
