@@ -34,6 +34,9 @@ public static class GlobalPolicyStore
             var policy = JsonSerializer.Deserialize<SuperWallPolicy>(json) ?? CreateDefault();
             policy.BlockedDomains ??= new List<string>();
             policy.BlockedDomains = NormalizeDomains(policy.BlockedDomains);
+            // These are defaults only. Enforcement is controlled per device.
+            policy.UrlBlockingEnabled = true;
+            policy.DownloadsBlocked = true;
             return policy;
         }
         catch (JsonException)
@@ -47,9 +50,11 @@ public static class GlobalPolicyStore
         policy ??= CreateDefault();
         policy.Version = Math.Max(1, policy.Version);
         policy.BlockedDomains = NormalizeDomains(policy.BlockedDomains ?? new List<string>());
+        // URL/download switches are intentionally always-on defaults here.
+        // The actual switches are stored and enforced per device.
+        policy.UrlBlockingEnabled = true;
+        policy.DownloadsBlocked = true;
 
-        // The dashboard sends only the switches and domains it edits. Keep the
-        // complete policy object valid and retry briefly if SQLite is momentarily busy.
         var json = JsonSerializer.Serialize(policy);
         for (var attempt = 0; ; attempt++)
         {
@@ -70,8 +75,8 @@ public static class GlobalPolicyStore
         }
     }
 
-    // Global policy is authoritative for its switches and mandatory domains.
-    // Device policies may add extra blocked domains, but cannot weaken a global setting.
+    // Global policy supplies shared defaults and mandatory domains.
+    // URL blocking and download blocking are controlled independently per device.
     public static SuperWallPolicy Apply(SuperWallPolicy global, SuperWallPolicy device)
     {
         global.BlockedDomains ??= new List<string>();
@@ -79,7 +84,6 @@ public static class GlobalPolicyStore
 
         var effective = JsonSerializer.Deserialize<SuperWallPolicy>(JsonSerializer.Serialize(device)) ?? new SuperWallPolicy();
         effective.Version = Math.Max(global.Version, device.Version);
-        effective.UrlBlockingEnabled = global.UrlBlockingEnabled;
         effective.BlockedDomains = global.BlockedDomains
             .Concat(device.BlockedDomains)
             .Where(x => !string.IsNullOrWhiteSpace(x))
@@ -88,7 +92,6 @@ public static class GlobalPolicyStore
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .ToList();
         effective.SearchHistoryEnabled = global.SearchHistoryEnabled;
-        effective.DownloadsBlocked = global.DownloadsBlocked;
         effective.LockBrowserInstallation = global.LockBrowserInstallation;
         effective.BlockPortableBrowsers = global.BlockPortableBrowsers;
         if (!string.IsNullOrWhiteSpace(global.DashboardUrl)) effective.DashboardUrl = global.DashboardUrl;
