@@ -41,11 +41,13 @@ public static class GlobalPolicyStore
         cmd.ExecuteNonQuery();
     }
 
+    // Global policy is authoritative for its switches and mandatory domains.
+    // Device policies may add extra blocked domains, but cannot weaken a global setting.
     public static SuperWallPolicy Apply(SuperWallPolicy global, SuperWallPolicy device)
     {
         var effective = JsonSerializer.Deserialize<SuperWallPolicy>(JsonSerializer.Serialize(device)) ?? new SuperWallPolicy();
         effective.Version = Math.Max(global.Version, device.Version);
-        effective.UrlBlockingEnabled = global.UrlBlockingEnabled || device.UrlBlockingEnabled;
+        effective.UrlBlockingEnabled = global.UrlBlockingEnabled;
         effective.BlockedDomains = global.BlockedDomains
             .Concat(device.BlockedDomains)
             .Where(x => !string.IsNullOrWhiteSpace(x))
@@ -53,10 +55,10 @@ public static class GlobalPolicyStore
             .Where(x => x.Length > 0)
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .ToList();
-        effective.SearchHistoryEnabled = global.SearchHistoryEnabled || device.SearchHistoryEnabled;
-        effective.DownloadsBlocked = global.DownloadsBlocked || device.DownloadsBlocked;
-        effective.LockBrowserInstallation = global.LockBrowserInstallation || device.LockBrowserInstallation;
-        effective.BlockPortableBrowsers = global.BlockPortableBrowsers || device.BlockPortableBrowsers;
+        effective.SearchHistoryEnabled = global.SearchHistoryEnabled;
+        effective.DownloadsBlocked = global.DownloadsBlocked;
+        effective.LockBrowserInstallation = global.LockBrowserInstallation;
+        effective.BlockPortableBrowsers = global.BlockPortableBrowsers;
         if (!string.IsNullOrWhiteSpace(global.DashboardUrl)) effective.DashboardUrl = global.DashboardUrl;
         if (!string.IsNullOrWhiteSpace(global.DownloadPinHash)) effective.DownloadPinHash = global.DownloadPinHash;
         if (!string.IsNullOrWhiteSpace(global.DownloadPinSalt)) effective.DownloadPinSalt = global.DownloadPinSalt;
