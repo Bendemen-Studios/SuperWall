@@ -16,6 +16,7 @@ public sealed class PolicySyncService : BackgroundService
     private string _deviceId = "";
     private string _dashboard = "";
     private string _agentToken = "";
+    private bool _revoked;
     private readonly SearchHistoryCollector _history = new();
     private BlockProxy? _proxy;
     private LocalControlServer? _local;
@@ -27,7 +28,12 @@ public sealed class PolicySyncService : BackgroundService
         Directory.CreateDirectory(_stateDir);
         SecurityHardening.Apply();
         LoadCached();
-        ApplyPolicy();
+
+        // Check the server before applying cached browser enforcement. A revoked
+        // device must be able to cleanly remove its old proxy configuration.
+        await SyncOnce(stoppingToken);
+        if (!_revoked) ApplyPolicy();
+
         _local = new LocalControlServer(() => _policy);
         _local.Start();
         _portableBrowsers.Start();
@@ -39,7 +45,7 @@ public sealed class PolicySyncService : BackgroundService
             await SyncOnce(stoppingToken);
             SecurityHardening.Apply();
 
-            if (DateTimeOffset.UtcNow >= nextUpdateCheck)
+            if (!_revoked && DateTimeOffset.UtcNow >= nextUpdateCheck)
             {
                 await _updater.CheckAndInstallAsync(stoppingToken);
                 nextUpdateCheck = DateTimeOffset.UtcNow.AddHours(6);
@@ -93,15 +99,25 @@ public sealed class PolicySyncService : BackgroundService
 
     private async Task SyncOnce(CancellationToken ct)
     {
-        if (string.IsNullOrWhiteSpace(_dashboard)) return;
+        if (_revoked || string.IsNullOrWhiteSpace(_dashboard)) return;
         if (!Uri.TryCreate(_dashboard, UriKind.Absolute, out var baseUri) || !string.Equals(baseUri.Scheme, Uri.UriSchemeHttps, StringComparison.OrdinalIgnoreCase)) return;
         try
         {
             if (string.IsNullOrWhiteSpace(_agentToken)) await Enroll(ct);
-            if (string.IsNullOrWhiteSpace(_agentToken)) return;
+            if (_revoked || string.IsNullOrWhiteSpace(_agentToken)) return;
             using var request = new HttpRequestMessage(HttpMethod.Get, $"{_dashboard.TrimEnd('/')}/api/agent/{Uri.EscapeDataString(_deviceId)}");
             request.Headers.Add("X-SuperWall-Agent", _agentToken);
             var response = await _http.SendAsync(request, ct);
+
+            if (response.StatusCode == System.Net.HttpStatusCode.Unauthorized)
+            {
+                // The dashboard's Revoke action invalidates the agent token. Treat
+                // that as a local revoke signal and remove every SuperWall browser
+                // enforcement immediately instead of leaving a dead proxy behind.
+                ClearRevokedState();
+                return;
+            }
+
             if (!response.IsSuccessStatusCode) return;
             var envelope = await response.Content.ReadFromJsonAsync<PolicyEnvelope>(cancellationToken: ct);
             if (envelope is null || envelope.Policy.Version < _policy.Version) return;
@@ -116,6 +132,23 @@ public sealed class PolicySyncService : BackgroundService
             }
         }
         catch { }
+    }
+
+    private void ClearRevokedState()
+    {
+        _revoked = true;
+        _agentToken = "";
+        LocalSecrets.Delete("agent-token");
+        ConsumeEnrollmentKey();
+
+        _proxy?.Dispose();
+        _proxy = null;
+        BrowserPolicy.ClearEnforcement();
+        NetworkHardening.Apply(Array.Empty<string>(), false);
+        DownloadGuard.SetEnabled(false, _policy);
+        _local?.Dispose();
+        _local = null;
+        _portableBrowsers.Dispose();
     }
 
     private async Task Enroll(CancellationToken ct)
