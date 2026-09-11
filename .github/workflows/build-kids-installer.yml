@@ -55,13 +55,18 @@ jobs:
           New-Item -ItemType Directory -Force publish/installer/inner | Out-Null
           & $iscc installer/SuperWallKids.iss
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          Move-Item publish/installer/SuperWall-Kids-Setup-0.4.7.exe publish/installer/inner/SuperWall-Kids-Inner.exe -Force
+          $innerInstaller = 'publish/installer/SuperWall-Kids-Setup-0.4.7.exe'
+          if (-not (Test-Path -LiteralPath $innerInstaller)) { throw "Inner installer was not created: $innerInstaller" }
+          Move-Item $innerInstaller publish/installer/inner/SuperWall-Kids-Inner.exe -Force
 
       - name: Build temp-safe single-file bootstrapper
         shell: pwsh
         run: |
           dotnet publish installer/Bootstrapper/SuperWallInstallerBootstrapper.csproj -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -o publish/installer/bootstrapper
-          Copy-Item publish/installer/bootstrapper/SuperWall-Kids-Setup-0.4.7.exe publish/installer/SuperWall-Kids-Setup-0.4.7.exe -Force
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $bootstrapper = 'publish/installer/bootstrapper/SuperWallInstallerBootstrapper.exe'
+          if (-not (Test-Path -LiteralPath $bootstrapper)) { throw "Bootstrapper executable was not created: $bootstrapper" }
+          Copy-Item $bootstrapper publish/installer/SuperWall-Kids-Setup-0.4.7.exe -Force
           Remove-Item publish/installer/bootstrapper -Recurse -Force
           Remove-Item publish/installer/inner -Recurse -Force
 
