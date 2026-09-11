@@ -9,7 +9,7 @@ public sealed class SuperWallPolicy
     public bool UrlBlockingEnabled { get; set; } = true;
     public List<string> BlockedDomains { get; set; } = new() { "tiktok.com", "youtube.com", "roblox.com", "pornhub.com" };
     public bool SearchHistoryEnabled { get; set; } = true;
-    public int SearchHistoryRetentionDays => Profile == RiskProfile.High ? 365 : 30;
+    public int SearchHistoryRetentionDays => Profile == RiskProfile.High ? 30 : 14;
     public bool DownloadsBlocked { get; set; } = true;
     public string DownloadPinHash { get; set; } = "";
     public string DownloadPinSalt { get; set; } = "";
