@@ -23,7 +23,7 @@ public sealed class PolicySyncService : BackgroundService
     private LocalControlServer? _local;
     private readonly PortableBrowserGuard _portableBrowsers = new();
     private AutoUpdater? _updater;
-    private int _lastAppliedPolicyVersion = -1;
+    private long _lastAppliedPolicyVersion = -1;
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
