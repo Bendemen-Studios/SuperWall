@@ -11,6 +11,10 @@ on:
 permissions:
   contents: write
 
+concurrency:
+  group: superwall-kids-installer-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   build-installer:
     runs-on: windows-latest
@@ -51,60 +55,56 @@ jobs:
           New-Item -ItemType Directory -Force publish/installer/inner | Out-Null
           & $iscc installer/SuperWallKids.iss
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          Move-Item publish/installer/SuperWall-Kids-Setup-0.4.6.exe publish/installer/inner/SuperWall-Kids-Inner.exe -Force
+          Move-Item publish/installer/SuperWall-Kids-Setup-0.4.7.exe publish/installer/inner/SuperWall-Kids-Inner.exe -Force
 
       - name: Build temp-safe single-file bootstrapper
         shell: pwsh
         run: |
           dotnet publish installer/Bootstrapper/SuperWallInstallerBootstrapper.csproj -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -o publish/installer/bootstrapper
-          Copy-Item publish/installer/bootstrapper/SuperWall-Kids-Setup-0.4.6.exe publish/installer/SuperWall-Kids-Setup-0.4.6.exe -Force
+          Copy-Item publish/installer/bootstrapper/SuperWall-Kids-Setup-0.4.7.exe publish/installer/SuperWall-Kids-Setup-0.4.7.exe -Force
           Remove-Item publish/installer/bootstrapper -Recurse -Force
           Remove-Item publish/installer/inner -Recurse -Force
 
       - name: Verify installer
         shell: pwsh
         run: |
-          $installer = 'publish/installer/SuperWall-Kids-Setup-0.4.6.exe'
+          $installer = 'publish/installer/SuperWall-Kids-Setup-0.4.7.exe'
           if (-not (Test-Path $installer)) { throw "Installer not found: $installer" }
           if ((Get-Item $installer).Length -lt 1MB) { throw 'Installer unexpectedly small.' }
 
       - name: Generate SHA256
         shell: pwsh
         run: |
-          (Get-FileHash publish/installer/SuperWall-Kids-Setup-0.4.6.exe -Algorithm SHA256).Hash | Out-File publish/installer/SHA256.txt
+          (Get-FileHash publish/installer/SuperWall-Kids-Setup-0.4.7.exe -Algorithm SHA256).Hash | Out-File publish/installer/SHA256.txt
 
       - name: Upload installer artifact
         uses: actions/upload-artifact@v4
         with:
           name: SuperWall-Kids-Installer
           path: |
-            publish/installer/SuperWall-Kids-Setup-0.4.6.exe
+            publish/installer/SuperWall-Kids-Setup-0.4.7.exe
             publish/installer/SHA256.txt
 
       - name: Publish GitHub release for kids tag
         if: github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/kids-v') || github.event_name == 'workflow_dispatch'
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: kids-v0.4.6
+          tag_name: kids-v0.4.7
           target_commitish: ${{ github.sha }}
           files: |
-            publish/installer/SuperWall-Kids-Setup-0.4.6.exe
+            publish/installer/SuperWall-Kids-Setup-0.4.7.exe
             publish/installer/SHA256.txt
           body: |
-            ## SuperWall Kids 0.4.6
+            ## SuperWall Kids 0.4.7
 
             Windows client installer for SuperWall.
 
-            - Fixes elevated-installer account targeting by carrying the interactive Windows username through UAC elevation
-            - Keeps enforcement scoped to the explicitly enrolled Windows account instead of replacing it with the active admin account
-            - Loads the enrolled user's profile hive when required for per-user browser policy
-            - Blocks configured domains such as YouTube through Chromium browser policy and the local HTTPS proxy
-            - Disables QUIC and browser DoH while URL blocking is enabled so HTTPS traffic cannot bypass the proxy
-            - Restarts managed browsers when the effective policy changes
-            - Blocks Chromium browser downloads when download blocking is enabled
-            - Keeps DownloadGuard as a filesystem fallback for the enrolled user's Downloads folder
-            - Removes legacy machine-wide SuperWall browser policies during upgrade
-            - Secure automatic update checks every 6 hours
+            - Fixes existing-installation upgrade failures caused by a locked shared inner installer executable
+            - Uses a unique temporary inner-installer directory for every bootstrapper run
+            - Stops the existing SuperWall service before replacing the agent executable during upgrades
+            - Preserves the dashboard, enrollment, target-user and policy behavior
+            - Keeps enforcement scoped to the explicitly enrolled Windows account
+            - Keeps browser URL blocking, download blocking and per-user policy enforcement
             - Self-contained Windows x64 agent
           generate_release_notes: false
           draft: false
