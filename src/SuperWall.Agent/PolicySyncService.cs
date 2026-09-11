@@ -152,8 +152,31 @@ public sealed class PolicySyncService : BackgroundService
     private void ApplyPolicy()
     {
         BrowserPolicy.Apply(_policy);
-        _proxy?.Dispose();
-        if (_policy.UrlBlockingEnabled) { _proxy = new BlockProxy(IsBlocked); _proxy.Start(); }
+
+        if (_policy.UrlBlockingEnabled)
+        {
+            // Never let a proxy bind failure kill the Windows service. The next
+            // policy sync will retry while the browser remains fail-closed.
+            if (_proxy is null)
+            {
+                var candidate = new BlockProxy(IsBlocked);
+                try
+                {
+                    candidate.Start();
+                    _proxy = candidate;
+                }
+                catch
+                {
+                    candidate.Dispose();
+                }
+            }
+        }
+        else
+        {
+            _proxy?.Dispose();
+            _proxy = null;
+        }
+
         NetworkHardening.Apply(_policy.BlockedDomains, _policy.UrlBlockingEnabled);
         DownloadGuard.SetEnabled(_policy.DownloadsBlocked, _policy);
     }
