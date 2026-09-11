@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Net.Http.Json;
 using System.Security.Cryptography;
 using System.Text.Json;
@@ -22,6 +23,7 @@ public sealed class PolicySyncService : BackgroundService
     private LocalControlServer? _local;
     private readonly PortableBrowserGuard _portableBrowsers = new();
     private AutoUpdater? _updater;
+    private int _lastAppliedPolicyVersion = -1;
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
@@ -179,6 +181,7 @@ public sealed class PolicySyncService : BackgroundService
 
     private void ApplyPolicy()
     {
+        var policyChanged = _lastAppliedPolicyVersion != _policy.Version;
         BrowserPolicy.Apply(_policy);
 
         if (_policy.UrlBlockingEnabled)
@@ -204,6 +207,35 @@ public sealed class PolicySyncService : BackgroundService
         }
 
         DownloadGuard.SetEnabled(_policy.DownloadsBlocked, _policy);
+        _lastAppliedPolicyVersion = _policy.Version;
+
+        // Chromium/Edge read enterprise URLBlocklist and proxy policy when the
+        // browser starts. Restart only when the effective policy actually
+        // changes (never every 60-second sync), so newly blocked domains take
+        // effect immediately instead of requiring the child to close the tab.
+        if (policyChanged && _policy.UrlBlockingEnabled)
+            RestartManagedBrowsers();
+    }
+
+    private static void RestartManagedBrowsers()
+    {
+        foreach (var name in new[] { "msedge", "chrome" })
+        {
+            try
+            {
+                foreach (var process in Process.GetProcessesByName(name))
+                {
+                    try
+                    {
+                        if (!process.CloseMainWindow()) process.Kill(true);
+                        else if (!process.WaitForExit(3000)) process.Kill(true);
+                    }
+                    catch { }
+                    finally { process.Dispose(); }
+                }
+            }
+            catch { }
+        }
     }
 
     private bool IsBlocked(string host) => _policy.BlockedDomains.Any(d => host.Equals(d, StringComparison.OrdinalIgnoreCase) || host.EndsWith("." + d, StringComparison.OrdinalIgnoreCase));
