@@ -4,7 +4,7 @@ using System.Runtime.InteropServices;
 
 internal static class Program
 {
-    private const string InnerName = "SuperWall-Kids-Inner.exe";
+    private const string InnerResourceName = "SuperWall-Kids-Inner.exe";
 
     [DllImport("Wtsapi32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
     private static extern bool WTSQuerySessionInformation(
@@ -25,6 +25,7 @@ internal static class Program
     [STAThread]
     private static int Main(string[] args)
     {
+        string? runDirectory = null;
         try
         {
             var root = Path.Combine(
@@ -35,13 +36,18 @@ internal static class Program
             var safeTemp = Path.Combine(root, "Temp");
             Directory.CreateDirectory(safeTemp);
 
-            var innerPath = Path.Combine(root, InnerName);
-            using (var stream = Assembly.GetExecutingAssembly().GetManifestResourceStream(InnerName))
+            // Never overwrite a shared inner-installer executable. A running previous
+            // installer can still hold a handle on it during an upgrade.
+            runDirectory = Path.Combine(root, "run-" + Guid.NewGuid().ToString("N"));
+            Directory.CreateDirectory(runDirectory);
+            var innerPath = Path.Combine(runDirectory, InnerResourceName);
+
+            using (var stream = Assembly.GetExecutingAssembly().GetManifestResourceStream(InnerResourceName))
             {
                 if (stream is null)
                     throw new InvalidOperationException("SuperWall installer payload ontbreekt.");
 
-                using var output = File.Create(innerPath);
+                using var output = File.CreateNew(innerPath);
                 stream.CopyTo(output);
             }
 
@@ -51,7 +57,7 @@ internal static class Program
             {
                 FileName = innerPath,
                 UseShellExecute = false,
-                WorkingDirectory = root,
+                WorkingDirectory = runDirectory,
                 Arguments = string.Join(" ", args.Select(QuoteArgument))
             };
 
@@ -79,6 +85,29 @@ internal static class Program
 
             return 1;
         }
+        finally
+        {
+            if (!string.IsNullOrWhiteSpace(runDirectory))
+                ScheduleCleanup(runDirectory);
+        }
+    }
+
+    private static void ScheduleCleanup(string runDirectory)
+    {
+        try
+        {
+            var escaped = runDirectory.Replace("'", "''", StringComparison.Ordinal);
+            var script = "$path='" + escaped + "'; Start-Sleep -Milliseconds 1000; if(Test-Path -LiteralPath $path){Remove-Item -LiteralPath $path -Recurse -Force -ErrorAction SilentlyContinue}";
+            Process.Start(new ProcessStartInfo
+            {
+                FileName = "powershell.exe",
+                UseShellExecute = false,
+                CreateNoWindow = true,
+                WindowStyle = ProcessWindowStyle.Hidden,
+                ArgumentList = { "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", script }
+            });
+        }
+        catch { }
     }
 
     private static string? GetInteractiveUser()
