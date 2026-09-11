@@ -1,5 +1,5 @@
 #define MyAppName "SuperWall Kids"
-#define MyAppVersion "0.3.0"
+#define MyAppVersion "0.4.0"
 #define MyPublisher "Bendemen Studios"
 #define MyExeName "SuperWall.Agent.exe"
 #define ServiceSddl "D:(A;;CCLCSWRPWPDTLOCRRC;;;SY)(A;;CCDCLCSWRPWPDTLOCRSDRCWDWO;;;BA)(A;;CCLCRP;;;AU)"
@@ -35,6 +35,11 @@ var
   DashboardPage: TInputQueryWizardPage;
   EnrollmentPage: TInputQueryWizardPage;
 
+function IsUpgrade: Boolean;
+begin
+  Result := WizardSilent and (CompareText(ExpandConstant('{param:UPGRADE|}'), '1') = 0);
+end;
+
 function IsValidHttpsUrl(const Value: string): Boolean;
 begin
   Result := (Pos('https://', LowerCase(Value)) = 1) and (Length(Value) > 8);
@@ -61,6 +66,11 @@ begin
     'Enrollment key',
     'Deze eenmalige bootstrap-key koppelt deze Windows-pc aan je SuperWall-installatie.');
   EnrollmentPage.Add('Enrollment key:', True);
+end;
+
+function ShouldSkipPage(PageID: Integer): Boolean;
+begin
+  Result := IsUpgrade and ((PageID = DashboardPage.ID) or (PageID = EnrollmentPage.ID));
 end;
 
 function NextButtonClick(CurPageID: Integer): Boolean;
@@ -91,8 +101,6 @@ var
 begin
   if CurStep <> ssPostInstall then Exit;
 
-  DashboardUrl := DashboardPage.Values[0];
-  EnrollmentKey := Trim(EnrollmentPage.Values[0]);
   AgentPath := ExpandConstant('{app}\{#MyExeName}');
   AppDir := ExpandConstant('{app}');
   CommonDir := ExpandConstant('{commonappdata}\SuperWall');
@@ -102,22 +110,27 @@ begin
   if not DirExists(CommonDir) then
     ForceDirectories(CommonDir);
 
-  { Keep a local persistent copy for the LocalSystem service. }
-  SaveStringToFile(DashboardFile, DashboardUrl, False);
-  SaveStringToFile(EnrollmentFile, EnrollmentKey, False);
+  if not IsUpgrade then
+  begin
+    DashboardUrl := DashboardPage.Values[0];
+    EnrollmentKey := Trim(EnrollmentPage.Values[0]);
+    SaveStringToFile(DashboardFile, DashboardUrl, False);
+    SaveStringToFile(EnrollmentFile, EnrollmentKey, False);
+    RegWriteStringValue(HKEY_LOCAL_MACHINE,
+      'SYSTEM\CurrentControlSet\Control\Session Manager\Environment',
+      'SUPERWALL_DASHBOARD', DashboardUrl);
+  end;
 
   RunHidden(ExpandConstant('{sysnative}\icacls.exe'),
     '"' + CommonDir + '" /inheritance:r /grant:r "SYSTEM:(OI)(CI)(F)" "Administrators:(OI)(CI)(F)" "Users:(OI)(CI)(RX)" /deny "Users:(OI)(CI)(W,DC,WDAC,WEA)"');
-  RunHidden(ExpandConstant('{sysnative}\icacls.exe'),
-    '"' + EnrollmentFile + '" /inheritance:r /grant:r "SYSTEM:(F)" "Administrators:(F)"');
-  RunHidden(ExpandConstant('{sysnative}\icacls.exe'),
-    '"' + DashboardFile + '" /inheritance:r /grant:r "SYSTEM:(F)" "Administrators:(F)"');
+  if FileExists(EnrollmentFile) then
+    RunHidden(ExpandConstant('{sysnative}\icacls.exe'),
+      '"' + EnrollmentFile + '" /inheritance:r /grant:r "SYSTEM:(F)" "Administrators:(F)"');
+  if FileExists(DashboardFile) then
+    RunHidden(ExpandConstant('{sysnative}\icacls.exe'),
+      '"' + DashboardFile + '" /inheritance:r /grant:r "SYSTEM:(F)" "Administrators:(F)"');
   RunHidden(ExpandConstant('{sysnative}\icacls.exe'),
     '"' + AppDir + '" /inheritance:r /grant:r "SYSTEM:(OI)(CI)(F)" "Administrators:(OI)(CI)(F)" "Users:(OI)(CI)(RX)" /deny "Users:(OI)(CI)(W,DC,WDAC,WEA)"');
-
-  RegWriteStringValue(HKEY_LOCAL_MACHINE,
-    'SYSTEM\CurrentControlSet\Control\Session Manager\Environment',
-    'SUPERWALL_DASHBOARD', DashboardUrl);
 
   Exec(ExpandConstant('{sysnative}\sc.exe'),
     'stop SuperWallAgent', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
@@ -140,5 +153,6 @@ begin
   Exec(ExpandConstant('{sysnative}\sc.exe'),
     'start SuperWallAgent', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
 
-  MsgBox('SuperWall Kids is geïnstalleerd. De pc wordt automatisch met het dashboard gekoppeld zodra de enrollment key is geaccepteerd.', mbInformation, MB_OK);
+  if not IsUpgrade then
+    MsgBox('SuperWall Kids is geïnstalleerd. De pc wordt automatisch met het dashboard gekoppeld zodra de enrollment key is geaccepteerd.', mbInformation, MB_OK);
 end;
