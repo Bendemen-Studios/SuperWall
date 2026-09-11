@@ -1,5 +1,5 @@
 #define MyAppName "SuperWall Kids"
-#define MyAppVersion "0.4.5"
+#define MyAppVersion "0.4.6"
 #define MyPublisher "Bendemen Studios"
 #define MyExeName "SuperWall.Agent.exe"
 #define ServiceSddl "D:(A;;CCLCSWRPWPDTLOCRRC;;;SY)(A;;CCDCLCSWRPWPDTLOCRSDRCWDWO;;;BA)(A;;CCLCRP;;;AU)"
@@ -96,7 +96,7 @@ end;
 
 procedure CurStepChanged(CurStep: TSetupStep);
 var
-  DashboardUrl, EnrollmentKey, AgentPath, EnrollmentFile, DashboardFile, TargetUserFile, AppDir, CommonDir: string;
+  DashboardUrl, EnrollmentKey, AgentPath, EnrollmentFile, DashboardFile, TargetUserFile, AppDir, CommonDir, TargetUser: string;
   ResultCode: Integer;
 begin
   if CurStep <> ssPostInstall then Exit;
@@ -117,13 +117,27 @@ begin
     EnrollmentKey := Trim(EnrollmentPage.Values[0]);
     SaveStringToFile(DashboardFile, DashboardUrl, False);
     SaveStringToFile(EnrollmentFile, EnrollmentKey, False);
-    SaveStringToFile(TargetUserFile, ExpandConstant('{username}'), False);
+
+    { The bootstrapper records the interactive account before UAC elevation.
+      Prefer that value over {username}, which can be the administrator that
+      approved the elevated installer. Fall back to {username} only when the
+      bootstrapper did not provide a target. }
+    TargetUser := GetEnv('SUPERWALL_TARGET_USER');
+    if Trim(TargetUser) = '' then
+      TargetUser := ExpandConstant('{username}');
+    SaveStringToFile(TargetUserFile, TargetUser, False);
+
     RegWriteStringValue(HKEY_LOCAL_MACHINE,
       'SYSTEM\CurrentControlSet\Control\Session Manager\Environment',
       'SUPERWALL_DASHBOARD', DashboardUrl);
   end
   else if not FileExists(TargetUserFile) then
-    SaveStringToFile(TargetUserFile, ExpandConstant('{username}'), False);
+  begin
+    TargetUser := GetEnv('SUPERWALL_TARGET_USER');
+    if Trim(TargetUser) = '' then
+      TargetUser := ExpandConstant('{username}');
+    SaveStringToFile(TargetUserFile, TargetUser, False);
+  end;
 
   { Remove machine-wide policies written by older SuperWall Kids versions.
     New versions only write to the enrolled Windows user's HKU hive. }
