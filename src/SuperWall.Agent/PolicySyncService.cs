@@ -29,8 +29,6 @@ public sealed class PolicySyncService : BackgroundService
         SecurityHardening.Apply();
         LoadCached();
 
-        // Check the server before applying cached browser enforcement. A revoked
-        // device must be able to cleanly remove its old proxy configuration.
         await SyncOnce(stoppingToken);
         if (!_revoked) ApplyPolicy();
 
@@ -111,9 +109,6 @@ public sealed class PolicySyncService : BackgroundService
 
             if (response.StatusCode == System.Net.HttpStatusCode.Unauthorized)
             {
-                // The dashboard's Revoke action invalidates the agent token. Treat
-                // that as a local revoke signal and remove every SuperWall browser
-                // enforcement immediately instead of leaving a dead proxy behind.
                 ClearRevokedState();
                 return;
             }
@@ -144,7 +139,6 @@ public sealed class PolicySyncService : BackgroundService
         _proxy?.Dispose();
         _proxy = null;
         BrowserPolicy.ClearEnforcement();
-        NetworkHardening.Apply(Array.Empty<string>(), false);
         DownloadGuard.SetEnabled(false, _policy);
         _local?.Dispose();
         _local = null;
@@ -188,8 +182,6 @@ public sealed class PolicySyncService : BackgroundService
 
         if (_policy.UrlBlockingEnabled)
         {
-            // Never let a proxy bind failure kill the Windows service. The next
-            // policy sync will retry while the browser remains fail-closed.
             if (_proxy is null)
             {
                 var candidate = new BlockProxy(IsBlocked);
@@ -210,7 +202,9 @@ public sealed class PolicySyncService : BackgroundService
             _proxy = null;
         }
 
-        NetworkHardening.Apply(_policy.BlockedDomains, _policy.UrlBlockingEnabled);
+        // Browser policy and the localhost proxy are user-scoped. Do not use
+        // hosts/firewall/DNS hardening here because those controls affect every
+        // Windows account on the machine, including the parent's account.
         DownloadGuard.SetEnabled(_policy.DownloadsBlocked, _policy);
     }
 
