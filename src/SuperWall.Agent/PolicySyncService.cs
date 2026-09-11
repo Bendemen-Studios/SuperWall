@@ -223,6 +223,7 @@ public sealed class PolicySyncService : BackgroundService
                 {
                     try
                     {
+                        if (!WindowsUserScope.IsTargetUserProcess(process)) continue;
                         if (!process.CloseMainWindow()) process.Kill(true);
                         else if (!process.WaitForExit(3000)) process.Kill(true);
                     }
