@@ -51,56 +51,56 @@ jobs:
           New-Item -ItemType Directory -Force publish/installer/inner | Out-Null
           & $iscc installer/SuperWallKids.iss
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          Move-Item publish/installer/SuperWall-Kids-Setup-0.4.4.exe publish/installer/inner/SuperWall-Kids-Inner.exe -Force
+          Move-Item publish/installer/SuperWall-Kids-Setup-0.4.5.exe publish/installer/inner/SuperWall-Kids-Inner.exe -Force
 
       - name: Build temp-safe single-file bootstrapper
         shell: pwsh
         run: |
           dotnet publish installer/Bootstrapper/SuperWallInstallerBootstrapper.csproj -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -o publish/installer/bootstrapper
-          Copy-Item publish/installer/bootstrapper/SuperWall-Kids-Setup-0.4.4.exe publish/installer/SuperWall-Kids-Setup-0.4.4.exe -Force
+          Copy-Item publish/installer/bootstrapper/SuperWall-Kids-Setup-0.4.5.exe publish/installer/SuperWall-Kids-Setup-0.4.5.exe -Force
           Remove-Item publish/installer/bootstrapper -Recurse -Force
           Remove-Item publish/installer/inner -Recurse -Force
 
       - name: Verify installer
         shell: pwsh
         run: |
-          $installer = 'publish/installer/SuperWall-Kids-Setup-0.4.4.exe'
+          $installer = 'publish/installer/SuperWall-Kids-Setup-0.4.5.exe'
           if (-not (Test-Path $installer)) { throw "Installer not found: $installer" }
           if ((Get-Item $installer).Length -lt 1MB) { throw 'Installer unexpectedly small.' }
 
       - name: Generate SHA256
         shell: pwsh
         run: |
-          (Get-FileHash publish/installer/SuperWall-Kids-Setup-0.4.4.exe -Algorithm SHA256).Hash | Out-File publish/installer/SHA256.txt
+          (Get-FileHash publish/installer/SuperWall-Kids-Setup-0.4.5.exe -Algorithm SHA256).Hash | Out-File publish/installer/SHA256.txt
 
       - name: Upload installer artifact
         uses: actions/upload-artifact@v4
         with:
           name: SuperWall-Kids-Installer
           path: |
-            publish/installer/SuperWall-Kids-Setup-0.4.4.exe
+            publish/installer/SuperWall-Kids-Setup-0.4.5.exe
             publish/installer/SHA256.txt
 
       - name: Publish GitHub release for kids tag
         if: startsWith(github.ref, 'refs/tags/kids-v') || github.event_name == 'workflow_dispatch'
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: kids-v0.4.4
+          tag_name: kids-v0.4.5
           files: |
-            publish/installer/SuperWall-Kids-Setup-0.4.4.exe
+            publish/installer/SuperWall-Kids-Setup-0.4.5.exe
             publish/installer/SHA256.txt
           body: |
-            ## SuperWall Kids 0.4.4
+            ## SuperWall Kids 0.4.5
 
             Windows client installer for SuperWall.
 
-            - Uses a temp-safe bootstrapper so installation does not depend on write access to the user's normal TEMP directory
+            - Fixes URL blocking by loading the enrolled user's Windows profile hive when it is not currently mounted
+            - Blocks configured domains such as YouTube through Chromium browser policy and the local HTTPS proxy
+            - Disables QUIC and browser DoH while URL blocking is enabled so HTTPS traffic cannot bypass the proxy
+            - Restarts Edge, Chrome, Brave, Vivaldi and Opera when the effective policy changes
             - Blocks ALL Chromium browser downloads when download blocking is enabled, regardless of the selected save location
             - Applies download blocking to Edge, Chrome, Brave, Vivaldi and Opera
             - Keeps DownloadGuard as a filesystem fallback for the enrolled user's Downloads folder
-            - Fixes direct navigation to blocked domains such as YouTube when URL blocking is enabled
-            - Refreshes browser policy immediately after a policy change
-            - URL blocking and download blocking remain independently configurable per device
             - Browser enforcement remains scoped to the enrolled Windows account
             - Removes legacy machine-wide SuperWall browser policies during upgrade
             - Secure automatic update checks every 6 hours
