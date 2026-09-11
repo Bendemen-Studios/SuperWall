@@ -42,14 +42,10 @@ public sealed class PolicySyncService : BackgroundService
     {
         var file = Path.Combine(_stateDir, "policy.json");
         try { _policy = JsonSerializer.Deserialize<SuperWallPolicy>(File.ReadAllText(file)) ?? new(); } catch { _policy = new(); }
-
         var dashboardFile = Path.Combine(_stateDir, DashboardFileName);
         var configured = "";
         try { if (File.Exists(dashboardFile)) configured = File.ReadAllText(dashboardFile).Trim(); } catch { }
-        _dashboard = string.IsNullOrWhiteSpace(configured)
-            ? (Environment.GetEnvironmentVariable("SUPERWALL_DASHBOARD") ?? _policy.DashboardUrl)
-            : configured;
-
+        _dashboard = string.IsNullOrWhiteSpace(configured) ? (Environment.GetEnvironmentVariable("SUPERWALL_DASHBOARD") ?? _policy.DashboardUrl) : configured;
         _agentToken = LocalSecrets.Load("agent-token") ?? "";
         _deviceId = LoadOrCreateDeviceId();
         EnsureDefaultPin();
@@ -75,13 +71,7 @@ public sealed class PolicySyncService : BackgroundService
 
     private string? LoadEnrollmentKey()
     {
-        try
-        {
-            var file = Path.Combine(_stateDir, EnrollmentFileName);
-            if (!File.Exists(file)) return null;
-            return File.ReadAllText(file).Trim();
-        }
-        catch { return null; }
+        try { var file = Path.Combine(_stateDir, EnrollmentFileName); return File.Exists(file) ? File.ReadAllText(file).Trim() : null; } catch { return null; }
     }
 
     private void ConsumeEnrollmentKey()
@@ -114,7 +104,7 @@ public sealed class PolicySyncService : BackgroundService
                 await UploadHistory(command.Id, ct);
             }
         }
-        catch { /* offline-first: retain the last known-good policy */ }
+        catch { }
     }
 
     private async Task Enroll(CancellationToken ct)
@@ -152,11 +142,7 @@ public sealed class PolicySyncService : BackgroundService
     {
         BrowserPolicy.Apply(_policy);
         _proxy?.Dispose();
-        if (_policy.UrlBlockingEnabled)
-        {
-            _proxy = new BlockProxy(IsBlocked);
-            _proxy.Start();
-        }
+        if (_policy.UrlBlockingEnabled) { _proxy = new BlockProxy(IsBlocked); _proxy.Start(); }
         NetworkHardening.Apply(_policy.BlockedDomains, _policy.UrlBlockingEnabled);
         DownloadGuard.SetEnabled(_policy.DownloadsBlocked, _policy);
     }
@@ -167,26 +153,14 @@ public sealed class PolicySyncService : BackgroundService
     {
         if (!_policy.SearchHistoryEnabled || string.IsNullOrWhiteSpace(_dashboard) || string.IsNullOrWhiteSpace(_agentToken) || string.IsNullOrWhiteSpace(requestId)) return;
         var records = _history.Collect(_policy.SearchHistoryRetentionDays);
-        if (records.Count == 0)
-        {
-            using var empty = new HttpRequestMessage(HttpMethod.Post, $"{_dashboard.TrimEnd('/')}/api/agent/{Uri.EscapeDataString(_deviceId)}/history")
-            { Content = JsonContent.Create(new HistoryUpload { DeviceId = _deviceId, RequestId = requestId }) };
-            empty.Headers.Add("X-SuperWall-Agent", _agentToken);
-            await _http.SendAsync(empty, ct);
-            return;
-        }
-        using var request = new HttpRequestMessage(HttpMethod.Post, $"{_dashboard.TrimEnd('/')}/api/agent/{Uri.EscapeDataString(_deviceId)}/history")
-        { Content = JsonContent.Create(new HistoryUpload { DeviceId = _deviceId, RequestId = requestId, Records = records }) };
+        var upload = new HistoryUpload { DeviceId = _deviceId, RequestId = requestId, Records = records };
+        using var request = new HttpRequestMessage(HttpMethod.Post, $"{_dashboard.TrimEnd('/')}/api/agent/{Uri.EscapeDataString(_deviceId)}/history") { Content = JsonContent.Create(upload) };
         request.Headers.Add("X-SuperWall-Agent", _agentToken);
         await _http.SendAsync(request, ct);
     }
 
     public override void Dispose()
     {
-        _proxy?.Dispose();
-        _local?.Dispose();
-        _portableBrowsers.Dispose();
-        _http.Dispose();
-        base.Dispose();
+        _proxy?.Dispose(); _local?.Dispose(); _portableBrowsers.Dispose(); _http.Dispose(); base.Dispose();
     }
 }
