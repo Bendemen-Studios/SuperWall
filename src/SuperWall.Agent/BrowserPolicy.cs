@@ -51,20 +51,23 @@ public static class BrowserPolicy
         {
             if (policy.UrlBlockingEnabled)
             {
-                // Force all browser traffic through the local SuperWall proxy.
-                // QUIC/DoH are disabled so HTTPS traffic cannot bypass the proxy.
                 key.SetValue("ProxyMode", "fixed_servers");
                 key.SetValue("ProxyServer", "127.0.0.1:18580");
                 key.SetValue("DnsOverHttpsMode", "off");
                 key.SetValue("QuicAllowed", 0, RegistryValueKind.DWord);
                 key.SetValue("BackgroundModeEnabled", 0, RegistryValueKind.DWord);
                 key.SetValue("ExtensionInstallBlocklist", new[] { "*" }, RegistryValueKind.MultiString);
+                key.SetValue("ProxyBypassList", new[] { "<local>" }, RegistryValueKind.MultiString);
 
                 DeleteValue(key, "URLBlocklist");
                 DeleteSubKeyTree(key, "URLBlocklist");
                 var blocked = policy.BlockedDomains
                     .Where(IsValidDomain)
-                    .SelectMany(d => new[] { $"*://{d}/*", $"*://*.{d}/*" })
+                    .SelectMany(d => new[]
+                    {
+                        $"*://{d}/*",
+                        $"*://*.{d}/*"
+                    })
                     .Distinct(StringComparer.OrdinalIgnoreCase)
                     .ToArray();
 
@@ -83,12 +86,11 @@ public static class BrowserPolicy
                 DeleteValue(key, "QuicAllowed");
                 DeleteValue(key, "BackgroundModeEnabled");
                 DeleteValue(key, "ExtensionInstallBlocklist");
+                DeleteValue(key, "ProxyBypassList");
                 DeleteValue(key, "URLBlocklist");
                 DeleteSubKeyTree(key, "URLBlocklist");
             }
 
-            // Chromium DownloadRestrictions=3 disallows all browser downloads,
-            // regardless of the selected save location.
             key.SetValue("DownloadRestrictions", policy.DownloadsBlocked ? 3 : 0, RegistryValueKind.DWord);
         }
         catch { }
@@ -104,6 +106,7 @@ public static class BrowserPolicy
         DeleteValue(key, "QuicAllowed");
         DeleteValue(key, "BackgroundModeEnabled");
         DeleteValue(key, "ExtensionInstallBlocklist");
+        DeleteValue(key, "ProxyBypassList");
         DeleteValue(key, "DownloadRestrictions");
         DeleteValue(key, "URLBlocklist");
         DeleteSubKeyTree(key, "URLBlocklist");
