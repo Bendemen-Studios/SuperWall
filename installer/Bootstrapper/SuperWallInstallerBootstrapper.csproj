@@ -8,7 +8,7 @@
     <PublishSingleFile>true</PublishSingleFile>
     <IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract>
     <EnableCompressionInSingleFile>true</EnableCompressionInSingleFile>
-    <AssemblyName>SuperWall-Kids-Setup-0.4.4</AssemblyName>
+    <AssemblyName>SuperWall-Kids-Setup-0.4.5</AssemblyName>
     <RootNamespace>SuperWallInstallerBootstrapper</RootNamespace>
   </PropertyGroup>
 
