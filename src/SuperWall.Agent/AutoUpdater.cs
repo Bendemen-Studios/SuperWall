@@ -61,7 +61,8 @@ public sealed class AutoUpdater
             var psi = new ProcessStartInfo
             {
                 FileName = tempInstaller,
-                Arguments = "/UPGRADE /VERYSILENT /SUPPRESSMSGBOXES /NORESTART",
+                // Inno Setup expects the upgrade parameter to have a value.
+                Arguments = "/UPGRADE=1 /VERYSILENT /SUPPRESSMSGBOXES /NORESTART",
                 UseShellExecute = true,
                 Verb = "runas",
                 WorkingDirectory = Path.GetDirectoryName(tempInstaller) ?? _stateDir
