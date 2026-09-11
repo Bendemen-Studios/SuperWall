@@ -211,9 +211,9 @@ public sealed class PolicySyncService : BackgroundService
 
         // Chromium/Edge read enterprise URLBlocklist and proxy policy when the
         // browser starts. Restart only when the effective policy actually
-        // changes (never every 60-second sync), so newly blocked domains take
-        // effect immediately instead of requiring the child to close the tab.
-        if (policyChanged && _policy.UrlBlockingEnabled)
+        // changes (never every 60-second sync), so changes take effect
+        // immediately instead of requiring the child to close the browser.
+        if (policyChanged)
             RestartManagedBrowsers();
     }
 
