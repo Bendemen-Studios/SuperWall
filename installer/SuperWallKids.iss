@@ -37,12 +37,14 @@ var
 
 function IsUpgrade: Boolean;
 begin
-  Result := WizardSilent and (CompareText(ExpandConstant('{param:UPGRADE|}'), '1') = 0);
+  Result := CompareText(ExpandConstant('{param:UPGRADE|}'), '1') = 0;
+  if not Result then
+    Result := FileExists(ExpandConstant('{app}\{#MyExeName}')) or FileExists(ExpandConstant('{commonappdata}\SuperWall\target-user.txt'));
 end;
 
 function IsValidHttpsUrl(const Value: string): Boolean;
 begin
-  Result := (Pos('https://', LowerCase(Value)) = 1) and (Length(Value) > 8);
+  Result := (Pos('https://', LowerCase(Trim(Value))) = 1) and (Length(Trim(Value)) > 8);
 end;
 
 function RunHidden(const FileName, Params: string): Boolean;
@@ -99,12 +101,12 @@ var
   DashboardUrl, EnrollmentKey, AgentPath, EnrollmentFile, DashboardFile, TargetUserFile, CommonDir, TargetUser: string;
   WaitCount: Integer;
 begin
-  { Stop the existing service before Inno replaces SuperWall.Agent.exe. }
+  { On upgrades the service must be stopped before Inno copies the new agent over it. }
   if (CurStep = ssInstall) and IsUpgrade then
   begin
     RunHidden(ExpandConstant('{sysnative}\sc.exe'), 'stop SuperWallAgent');
     WaitCount := 0;
-    while WaitCount < 25 do
+    while WaitCount < 50 do
     begin
       Sleep(200);
       Inc(WaitCount);
@@ -129,7 +131,6 @@ begin
     SaveStringToFile(DashboardFile, DashboardUrl, False);
     SaveStringToFile(EnrollmentFile, EnrollmentKey, False);
 
-    { The bootstrapper records the interactive account before UAC elevation. }
     TargetUser := GetEnv('SUPERWALL_TARGET_USER');
     if Trim(TargetUser) = '' then
       TargetUser := ExpandConstant('{username}');
