@@ -54,14 +54,14 @@ jobs:
       - name: Verify installer
         shell: pwsh
         run: |
-          $installer = 'publish/installer/SuperWall-Kids-Setup-0.4.2.exe'
+          $installer = 'publish/installer/SuperWall-Kids-Setup-0.4.3.exe'
           if (-not (Test-Path $installer)) { throw "Installer not found: $installer" }
           if ((Get-Item $installer).Length -lt 1MB) { throw 'Installer unexpectedly small.' }
 
       - name: Generate SHA256
         shell: pwsh
         run: |
-          (Get-FileHash publish/installer/SuperWall-Kids-Setup-0.4.2.exe -Algorithm SHA256).Hash | Out-File publish/installer/SHA256.txt
+          (Get-FileHash publish/installer/SuperWall-Kids-Setup-0.4.3.exe -Algorithm SHA256).Hash | Out-File publish/installer/SHA256.txt
 
       - name: Upload installer artifact
         uses: actions/upload-artifact@v4
@@ -73,22 +73,25 @@ jobs:
         if: startsWith(github.ref, 'refs/tags/kids-v') || github.event_name == 'workflow_dispatch'
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: kids-v0.4.2
+          tag_name: kids-v0.4.3
           files: |
-            publish/installer/SuperWall-Kids-Setup-0.4.2.exe
+            publish/installer/SuperWall-Kids-Setup-0.4.3.exe
             publish/installer/SHA256.txt
           body: |
-            ## SuperWall Kids 0.4.2
+            ## SuperWall Kids 0.4.3
 
             Windows client installer for SuperWall.
 
-            - Browser URL/download enforcement is scoped to the Windows account that installed Kids
-            - Parent/private Windows accounts are no longer affected by SuperWall Chromium policies
+            - Fixes direct navigation to blocked domains such as YouTube when URL blocking is enabled
+            - Refreshes Chromium/Edge policy immediately after a policy change
+            - URL blocking and download blocking remain independently configurable per device
+            - Global Policy keeps both switches enabled by default for devices
+            - Adds permanent device deletion from the dashboard
+            - Enrollment keys can be copied directly from the dashboard
+            - Browser URL/download enforcement remains scoped to the enrolled Windows account
+            - Parent/private Windows accounts are not affected by SuperWall Chromium policies
             - DownloadGuard only monitors the enrolled Kids user's Downloads folder
             - Removes legacy machine-wide SuperWall browser policies during upgrade
-            - Revoke clears only the enrolled user's SuperWall browser enforcement
-            - Keeps the agent alive if the local blocking proxy cannot bind immediately
-            - Retries starting the local proxy during policy sync instead of crashing the service
             - Secure automatic update checks every 6 hours
             - SHA256 verification before installation
             - Self-contained Windows x64 agent
