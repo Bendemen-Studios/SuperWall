@@ -55,7 +55,7 @@ jobs:
           New-Item -ItemType Directory -Force publish/installer/inner | Out-Null
           & $iscc installer/SuperWallKids.iss
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          $innerInstaller = 'publish/installer/SuperWall-Kids-Setup-0.4.7.exe'
+          $innerInstaller = 'publish/installer/SuperWall-Kids-Setup-0.4.8.exe'
           if (-not (Test-Path -LiteralPath $innerInstaller)) { throw "Inner installer was not created: $innerInstaller" }
           Move-Item $innerInstaller publish/installer/inner/SuperWall-Kids-Inner.exe -Force
 
@@ -64,16 +64,16 @@ jobs:
         run: |
           dotnet publish installer/Bootstrapper/SuperWallInstallerBootstrapper.csproj -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -o publish/installer/bootstrapper
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          $bootstrapper = 'publish/installer/bootstrapper/SuperWall-Kids-Setup-0.4.7.exe'
+          $bootstrapper = 'publish/installer/bootstrapper/SuperWallInstallerBootstrapper.exe'
           if (-not (Test-Path -LiteralPath $bootstrapper)) { throw "Bootstrapper executable was not created: $bootstrapper" }
-          Copy-Item $bootstrapper publish/installer/SuperWall-Kids-Setup-0.4.7.exe -Force
+          Copy-Item $bootstrapper publish/installer/SuperWall-Kids-Setup-0.4.8.exe -Force
           Remove-Item publish/installer/bootstrapper -Recurse -Force
           Remove-Item publish/installer/inner -Recurse -Force
 
       - name: Verify installer
         shell: pwsh
         run: |
-          $installer = 'publish/installer/SuperWall-Kids-Setup-0.4.7.exe'
+          $installer = 'publish/installer/SuperWall-Kids-Setup-0.4.8.exe'
           if (-not (Test-Path $installer)) { throw "Installer not found: $installer" }
           if ((Get-Item $installer).Length -lt 1MB) { throw 'Installer unexpectedly small.' }
           $bytes = [IO.File]::ReadAllBytes($installer)
@@ -82,14 +82,14 @@ jobs:
       - name: Generate SHA256
         shell: pwsh
         run: |
-          (Get-FileHash publish/installer/SuperWall-Kids-Setup-0.4.7.exe -Algorithm SHA256).Hash | Out-File publish/installer/SHA256.txt
+          (Get-FileHash publish/installer/SuperWall-Kids-Setup-0.4.8.exe -Algorithm SHA256).Hash | Out-File publish/installer/SHA256.txt
 
       - name: Upload installer artifact
         uses: actions/upload-artifact@v4
         with:
           name: SuperWall-Kids-Installer
           path: |
-            publish/installer/SuperWall-Kids-Setup-0.4.7.exe
+            publish/installer/SuperWall-Kids-Setup-0.4.8.exe
             publish/installer/SHA256.txt
 
       - name: Publish GitHub release for kids tag
@@ -99,17 +99,17 @@ jobs:
           tag_name: ${{ github.ref_name }}
           target_commitish: ${{ github.sha }}
           files: |
-            publish/installer/SuperWall-Kids-Setup-0.4.7.exe
+            publish/installer/SuperWall-Kids-Setup-0.4.8.exe
             publish/installer/SHA256.txt
           body: |
-            ## SuperWall Kids 0.4.7
+            ## SuperWall Kids 0.4.8
 
             Windows client installer for SuperWall.
 
+            - Fixes the Inno Setup upgrade crash caused by expanding `{app}` before initialization
             - Fixes existing-installation upgrade failures caused by a locked shared inner installer executable
             - Uses a unique temporary inner-installer directory for every bootstrapper run
             - Stops the existing SuperWall service before replacing the agent executable during upgrades
-            - Avoids using Inno Setup {app} during pre-initialization upgrade detection
             - Preserves the dashboard, enrollment, target-user and policy behavior
             - Keeps enforcement scoped to the explicitly enrolled Windows account
             - Keeps browser URL blocking, download blocking and per-user policy enforcement
