@@ -99,6 +99,17 @@ var
   DashboardUrl, EnrollmentKey, AgentPath, EnrollmentFile, DashboardFile, TargetUserFile, AppDir, CommonDir, TargetUser: string;
   ResultCode: Integer;
 begin
+  if CurStep <> ssInstall then Exit;
+
+  { Stop the existing service before Inno replaces SuperWall.Agent.exe.
+    This is required for reliable upgrades when the previous agent still has
+    the executable open. }
+  if IsUpgrade then
+  begin
+    RunHidden(ExpandConstant('{sysnative}\sc.exe'), 'stop SuperWallAgent');
+    Sleep(1500);
+  end;
+
   if CurStep <> ssPostInstall then Exit;
 
   AgentPath := ExpandConstant('{app}\{#MyExeName}');
@@ -119,9 +130,7 @@ begin
     SaveStringToFile(EnrollmentFile, EnrollmentKey, False);
 
     { The bootstrapper records the interactive account before UAC elevation.
-      Prefer that value over the elevated installer username, which can be the
-      administrator that approved the UAC prompt. Fall back to the installer
-      username only when the bootstrapper did not provide a target. }
+      Prefer that value over the elevated installer username. }
     TargetUser := GetEnv('SUPERWALL_TARGET_USER');
     if Trim(TargetUser) = '' then
       TargetUser := ExpandConstant('{username}');
@@ -139,8 +148,7 @@ begin
     SaveStringToFile(TargetUserFile, TargetUser, False);
   end;
 
-  { Remove machine-wide policies written by older SuperWall Kids versions.
-    New versions only write to the enrolled Windows user's HKU hive. }
+  { Remove machine-wide policies written by older SuperWall Kids versions. }
   RunHidden(ExpandConstant('{sysnative}\reg.exe'), 'delete "HKLM\SOFTWARE\Policies\Microsoft\Edge" /v ProxyMode /f');
   RunHidden(ExpandConstant('{sysnative}\reg.exe'), 'delete "HKLM\SOFTWARE\Policies\Microsoft\Edge" /v ProxyServer /f');
   RunHidden(ExpandConstant('{sysnative}\reg.exe'), 'delete "HKLM\SOFTWARE\Policies\Microsoft\Edge" /v DnsOverHttpsMode /f');
