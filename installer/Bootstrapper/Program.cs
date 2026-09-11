@@ -47,7 +47,7 @@ internal static class Program
                 if (stream is null)
                     throw new InvalidOperationException("SuperWall installer payload ontbreekt.");
 
-                using var output = File.CreateNew(innerPath);
+                using var output = new FileStream(innerPath, FileMode.CreateNew, FileAccess.Write, FileShare.None);
                 stream.CopyTo(output);
             }
 
