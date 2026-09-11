@@ -5,18 +5,27 @@ namespace SuperWall.Agent;
 
 public static class BrowserPolicy
 {
+    private static readonly string[] ChromiumPolicyPaths =
+    {
+        @"SOFTWARE\Policies\Microsoft\Edge",
+        @"SOFTWARE\Policies\Google\Chrome",
+        @"SOFTWARE\Policies\BraveSoftware\Brave-Browser",
+        @"SOFTWARE\Policies\Vivaldi",
+        @"SOFTWARE\Policies\Opera Software\Opera Stable"
+    };
+
     public static void Apply(SuperWallPolicy policy)
     {
         if (!OperatingSystem.IsWindows()) return;
-        ApplyChromium(@"SOFTWARE\Policies\Microsoft\Edge", policy);
-        ApplyChromium(@"SOFTWARE\Policies\Google\Chrome", policy);
+        foreach (var path in ChromiumPolicyPaths)
+            ApplyChromium(path, policy);
     }
 
     public static void ClearEnforcement()
     {
         if (!OperatingSystem.IsWindows()) return;
-        ClearChromium(@"SOFTWARE\Policies\Microsoft\Edge");
-        ClearChromium(@"SOFTWARE\Policies\Google\Chrome");
+        foreach (var path in ChromiumPolicyPaths)
+            ClearChromium(path);
     }
 
     private static void ApplyChromium(string path, SuperWallPolicy policy)
@@ -35,9 +44,6 @@ public static class BrowserPolicy
                 key.SetValue("BackgroundModeEnabled", 0, RegistryValueKind.DWord);
                 key.SetValue("ExtensionInstallBlocklist", new[] { "*" }, RegistryValueKind.MultiString);
 
-                // Chromium URLBlocklist is a subkey containing numbered REG_SZ
-                // URL patterns. Plain host names such as "youtube.com" are not
-                // valid URL patterns and can therefore be ignored by Chromium.
                 DeleteValue(key, "URLBlocklist");
                 DeleteSubKeyTree(key, "URLBlocklist");
                 var blocked = policy.BlockedDomains
@@ -65,6 +71,10 @@ public static class BrowserPolicy
                 DeleteSubKeyTree(key, "URLBlocklist");
             }
 
+            // Chromium DownloadRestrictions=3 means disallow ALL browser
+            // downloads, regardless of the folder/location selected by the user.
+            // This is the primary enforcement; DownloadGuard is only a fallback
+            // for files that somehow reach the filesystem.
             key.SetValue("DownloadRestrictions", policy.DownloadsBlocked ? 3 : 0, RegistryValueKind.DWord);
         }
         catch { }
