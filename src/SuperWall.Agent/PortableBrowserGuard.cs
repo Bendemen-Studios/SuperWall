@@ -26,6 +26,7 @@ public sealed class PortableBrowserGuard : IDisposable
             {
                 var name = Path.GetFileNameWithoutExtension(process.ProcessName);
                 if (!BrowserNames.Any(x => x.Equals(name, StringComparison.OrdinalIgnoreCase))) continue;
+                if (!WindowsUserScope.IsTargetUserProcess(process)) continue;
 
                 string? path = null;
                 try { path = process.MainModule?.FileName; } catch { }
