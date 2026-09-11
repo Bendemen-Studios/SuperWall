@@ -34,7 +34,7 @@ jobs:
         run: |
           winget install --id JRSoftware.InnoSetup.7 -e --silent --accept-source-agreements --accept-package-agreements --source winget
 
-      - name: Build EXE installer
+      - name: Build inner Inno installer
         shell: pwsh
         run: |
           $candidates = @(
@@ -48,8 +48,18 @@ jobs:
             $iscc = Get-ChildItem -Path $roots -Filter 'ISCC.exe' -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1 -ExpandProperty FullName
           }
           if (-not $iscc) { throw 'Inno Setup compiler (ISCC.exe) not found after installation.' }
+          New-Item -ItemType Directory -Force publish/installer/inner | Out-Null
           & $iscc installer/SuperWallKids.iss
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          Move-Item publish/installer/SuperWall-Kids-Setup-0.4.4.exe publish/installer/inner/SuperWall-Kids-Inner.exe -Force
+
+      - name: Build temp-safe single-file bootstrapper
+        shell: pwsh
+        run: |
+          dotnet publish installer/Bootstrapper/SuperWallInstallerBootstrapper.csproj -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -o publish/installer/bootstrapper
+          Copy-Item publish/installer/bootstrapper/SuperWall-Kids-Setup-0.4.4.exe publish/installer/SuperWall-Kids-Setup-0.4.4.exe -Force
+          Remove-Item publish/installer/bootstrapper -Recurse -Force
+          Remove-Item publish/installer/inner -Recurse -Force
 
       - name: Verify installer
         shell: pwsh
@@ -67,7 +77,9 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: SuperWall-Kids-Installer
-          path: publish/installer/*
+          path: |
+            publish/installer/SuperWall-Kids-Setup-0.4.4.exe
+            publish/installer/SHA256.txt
 
       - name: Publish GitHub release for kids tag
         if: startsWith(github.ref, 'refs/tags/kids-v') || github.event_name == 'workflow_dispatch'
@@ -82,6 +94,7 @@ jobs:
 
             Windows client installer for SuperWall.
 
+            - Uses a temp-safe bootstrapper so installation does not depend on write access to the user's normal TEMP directory
             - Blocks ALL Chromium browser downloads when download blocking is enabled, regardless of the selected save location
             - Applies download blocking to Edge, Chrome, Brave, Vivaldi and Opera
             - Keeps DownloadGuard as a filesystem fallback for the enrolled user's Downloads folder
