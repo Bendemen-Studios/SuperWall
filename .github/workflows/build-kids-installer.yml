@@ -8,6 +8,9 @@ on:
     tags:
       - 'kids-v*'
 
+permissions:
+  contents: write
+
 jobs:
   build-installer:
     runs-on: windows-latest
@@ -39,18 +42,12 @@ jobs:
             "${env:ProgramFiles(x86)}\Inno Setup 7\ISCC.exe",
             "$env:LOCALAPPDATA\Programs\Inno Setup 7\ISCC.exe"
           )
-
           $iscc = $candidates | Where-Object { Test-Path $_ } | Select-Object -First 1
-
           if (-not $iscc) {
             $roots = @($env:ProgramFiles, ${env:ProgramFiles(x86)}, "$env:LOCALAPPDATA\Programs") | Where-Object { $_ -and (Test-Path $_) }
-            $iscc = Get-ChildItem -Path $roots -Filter 'ISCC.exe' -Recurse -ErrorAction SilentlyContinue |
-              Select-Object -First 1 -ExpandProperty FullName
+            $iscc = Get-ChildItem -Path $roots -Filter 'ISCC.exe' -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1 -ExpandProperty FullName
           }
-
           if (-not $iscc) { throw 'Inno Setup compiler (ISCC.exe) not found after installation.' }
-          Write-Host "Using Inno Setup compiler: $iscc"
-          New-Item -ItemType Directory -Force publish/installer | Out-Null
           & $iscc installer/SuperWallKids.iss
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
@@ -59,16 +56,12 @@ jobs:
         run: |
           $installer = 'publish/installer/SuperWall-Kids-Setup-0.3.0.exe'
           if (-not (Test-Path $installer)) { throw "Installer not found: $installer" }
-          $size = (Get-Item $installer).Length
-          if ($size -lt 1MB) { throw "Installer unexpectedly small: $size bytes" }
-          Write-Host "Installer verified: $size bytes"
+          if ((Get-Item $installer).Length -lt 1MB) { throw 'Installer unexpectedly small.' }
 
       - name: Generate SHA256
         shell: pwsh
         run: |
-          Get-FileHash publish/installer/SuperWall-Kids-Setup-0.3.0.exe -Algorithm SHA256 |
-            Format-Table -AutoSize |
-            Out-File publish/installer/SHA256.txt
+          (Get-FileHash publish/installer/SuperWall-Kids-Setup-0.3.0.exe -Algorithm SHA256).Hash | Out-File publish/installer/SHA256.txt
 
       - name: Upload installer artifact
         uses: actions/upload-artifact@v4
@@ -84,7 +77,7 @@ jobs:
             publish/installer/SuperWall-Kids-Setup-0.3.0.exe
             publish/installer/SHA256.txt
           body: |
-            SuperWall Kids 0.3.0
+            ## SuperWall Kids 0.3.0
 
             Windows client installer for SuperWall.
 
