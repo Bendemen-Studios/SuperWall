@@ -17,15 +17,29 @@ public static class BrowserPolicy
     public static void Apply(SuperWallPolicy policy)
     {
         if (!OperatingSystem.IsWindows()) return;
-        foreach (var path in ChromiumPolicyPaths)
-            ApplyChromium(path, policy);
+        try
+        {
+            foreach (var path in ChromiumPolicyPaths)
+                ApplyChromium(path, policy);
+        }
+        finally
+        {
+            WindowsUserScope.UnloadTargetHiveIfLoadedByUs();
+        }
     }
 
     public static void ClearEnforcement()
     {
         if (!OperatingSystem.IsWindows()) return;
-        foreach (var path in ChromiumPolicyPaths)
-            ClearChromium(path);
+        try
+        {
+            foreach (var path in ChromiumPolicyPaths)
+                ClearChromium(path);
+        }
+        finally
+        {
+            WindowsUserScope.UnloadTargetHiveIfLoadedByUs();
+        }
     }
 
     private static void ApplyChromium(string path, SuperWallPolicy policy)
@@ -37,6 +51,8 @@ public static class BrowserPolicy
         {
             if (policy.UrlBlockingEnabled)
             {
+                // Force all browser traffic through the local SuperWall proxy.
+                // QUIC/DoH are disabled so HTTPS traffic cannot bypass the proxy.
                 key.SetValue("ProxyMode", "fixed_servers");
                 key.SetValue("ProxyServer", "127.0.0.1:18580");
                 key.SetValue("DnsOverHttpsMode", "off");
@@ -71,10 +87,8 @@ public static class BrowserPolicy
                 DeleteSubKeyTree(key, "URLBlocklist");
             }
 
-            // Chromium DownloadRestrictions=3 means disallow ALL browser
-            // downloads, regardless of the folder/location selected by the user.
-            // This is the primary enforcement; DownloadGuard is only a fallback
-            // for files that somehow reach the filesystem.
+            // Chromium DownloadRestrictions=3 disallows all browser downloads,
+            // regardless of the selected save location.
             key.SetValue("DownloadRestrictions", policy.DownloadsBlocked ? 3 : 0, RegistryValueKind.DWord);
         }
         catch { }
