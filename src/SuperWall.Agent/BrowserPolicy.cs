@@ -10,8 +10,6 @@ public static class BrowserPolicy
         if (!OperatingSystem.IsWindows()) return;
         ApplyChromium(@"SOFTWARE\Policies\Microsoft\Edge", policy);
         ApplyChromium(@"SOFTWARE\Policies\Google\Chrome", policy);
-        // Firefox's enterprise distribution policy is machine-wide. Do not
-        // write it here because SuperWall must not affect the parent's account.
     }
 
     public static void ClearEnforcement()
@@ -37,16 +35,17 @@ public static class BrowserPolicy
                 key.SetValue("BackgroundModeEnabled", 0, RegistryValueKind.DWord);
                 key.SetValue("ExtensionInstallBlocklist", new[] { "*" }, RegistryValueKind.MultiString);
 
-                // Chromium/Edge expect URLBlocklist as a registry subkey with
-                // numbered REG_SZ values (1, 2, 3, ...), not as a MultiString
-                // value on the parent key.
+                // Chromium URLBlocklist is a subkey containing numbered REG_SZ
+                // URL patterns. Plain host names such as "youtube.com" are not
+                // valid URL patterns and can therefore be ignored by Chromium.
                 DeleteValue(key, "URLBlocklist");
                 DeleteSubKeyTree(key, "URLBlocklist");
                 var blocked = policy.BlockedDomains
                     .Where(IsValidDomain)
-                    .SelectMany(d => new[] { d, $"*.{d}" })
+                    .SelectMany(d => new[] { $"*://{d}/*", $"*://*.{d}/*" })
                     .Distinct(StringComparer.OrdinalIgnoreCase)
                     .ToArray();
+
                 if (blocked.Length > 0)
                 {
                     using var list = key.CreateSubKey("URLBlocklist", true);
