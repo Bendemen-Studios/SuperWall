@@ -1,4 +1,5 @@
 using Microsoft.Win32;
+using System.Diagnostics;
 using System.Runtime.InteropServices;
 using System.Security.Principal;
 
@@ -19,6 +20,9 @@ public static class WindowsUserScope
     private const int ErrorSuccess = 0;
     private const int HKeyUsers = unchecked((int)0x80000003);
     private const int WtsUserName = 5;
+    private const uint TokenUser = 1;
+    private const uint TokenQuery = 0x0008;
+
     private static bool _loadedByUs;
     private static string? _resolvedTargetUser;
 
@@ -27,6 +31,15 @@ public static class WindowsUserScope
 
     [DllImport("advapi32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
     private static extern int RegUnLoadKey(IntPtr hKey, string lpSubKey);
+
+    [DllImport("advapi32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+    private static extern bool OpenProcessToken(IntPtr processHandle, uint desiredAccess, out IntPtr tokenHandle);
+
+    [DllImport("advapi32.dll", SetLastError = true)]
+    private static extern bool GetTokenInformation(IntPtr tokenHandle, uint tokenInformationClass, IntPtr tokenInformation, int tokenInformationLength, out int returnLength);
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    private static extern bool CloseHandle(IntPtr hObject);
 
     [DllImport("kernel32.dll")]
     private static extern uint WTSGetActiveConsoleSessionId();
@@ -61,11 +74,35 @@ public static class WindowsUserScope
 
     public static SecurityIdentifier? TargetSid()
     {
-        // The installer-created target-user.txt is authoritative. Do not
-        // replace it with the currently active console account: an elevated
-        // admin installer commonly runs in the admin's context even when the
-        // policy is intended for a child account.
         return TranslateToSid(TargetUserName());
+    }
+
+    /// <summary>Returns true only when the process is running as the configured target account.</summary>
+    public static bool IsTargetUserProcess(Process process)
+    {
+        var targetSid = TargetSid();
+        if (targetSid is null) return false;
+
+        try
+        {
+            if (!OpenProcessToken(process.Handle, TokenQuery, out var token)) return false;
+            try
+            {
+                GetTokenInformation(token, TokenUser, IntPtr.Zero, 0, out var length);
+                if (length <= 0) return false;
+                var buffer = Marshal.AllocHGlobal(length);
+                try
+                {
+                    if (!GetTokenInformation(token, TokenUser, buffer, length, out _)) return false;
+                    var tokenUser = Marshal.ReadIntPtr(buffer);
+                    var sid = new SecurityIdentifier(tokenUser);
+                    return sid.Equals(targetSid);
+                }
+                finally { Marshal.FreeHGlobal(buffer); }
+            }
+            finally { CloseHandle(token); }
+        }
+        catch { return false; }
     }
 
     public static bool SetTargetUser(string user)
@@ -92,9 +129,6 @@ public static class WindowsUserScope
 
     public static string? ResolveInstallTargetUser()
     {
-        // When called from an elevated installer, the original interactive
-        // account is best supplied explicitly by the bootstrapper. As a safe
-        // fallback, use the active console account.
         var active = ActiveConsoleUserName();
         return string.IsNullOrWhiteSpace(active) ? null : active;
     }
@@ -119,15 +153,9 @@ public static class WindowsUserScope
         if (!_loadedByUs) return;
         var sid = TargetSid();
         if (sid is null) return;
-        try
-        {
-            RegUnLoadKey(new IntPtr(HKeyUsers), sid.Value);
-        }
+        try { RegUnLoadKey(new IntPtr(HKeyUsers), sid.Value); }
         catch { }
-        finally
-        {
-            _loadedByUs = false;
-        }
+        finally { _loadedByUs = false; }
     }
 
     private static SecurityIdentifier? TranslateToSid(string? user)
@@ -154,25 +182,9 @@ public static class WindowsUserScope
         {
             var sessionId = WTSGetActiveConsoleSessionId();
             if (sessionId == uint.MaxValue) return null;
-
-            if (!WTSQuerySessionInformation(
-                    IntPtr.Zero,
-                    sessionId,
-                    WtsUserName,
-                    out var buffer,
-                    out _))
-                return null;
-
-            try
-            {
-                var user = Marshal.PtrToStringUni(buffer)?.Trim();
-                if (string.IsNullOrWhiteSpace(user)) return null;
-                return user;
-            }
-            finally
-            {
-                WTSFreeMemory(buffer);
-            }
+            if (!WTSQuerySessionInformation(IntPtr.Zero, sessionId, WtsUserName, out var buffer, out _)) return null;
+            try { return Marshal.PtrToStringUni(buffer)?.Trim(); }
+            finally { WTSFreeMemory(buffer); }
         }
         catch { return null; }
     }
@@ -191,8 +203,7 @@ public static class WindowsUserScope
         if (!File.Exists(hiveFile)) return;
 
         var result = RegLoadKey(new IntPtr(HKeyUsers), sidText, hiveFile);
-        if (result == ErrorSuccess)
-            _loadedByUs = true;
+        if (result == ErrorSuccess) _loadedByUs = true;
     }
 
     public static string? ProfilePath()
