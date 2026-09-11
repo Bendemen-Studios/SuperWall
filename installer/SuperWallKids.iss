@@ -1,5 +1,5 @@
 #define MyAppName "SuperWall Kids"
-#define MyAppVersion "0.4.1"
+#define MyAppVersion "0.4.2"
 #define MyPublisher "Bendemen Studios"
 #define MyExeName "SuperWall.Agent.exe"
 #define ServiceSddl "D:(A;;CCLCSWRPWPDTLOCRRC;;;SY)(A;;CCDCLCSWRPWPDTLOCRSDRCWDWO;;;BA)(A;;CCLCRP;;;AU)"
@@ -96,7 +96,7 @@ end;
 
 procedure CurStepChanged(CurStep: TSetupStep);
 var
-  DashboardUrl, EnrollmentKey, AgentPath, EnrollmentFile, DashboardFile, AppDir, CommonDir: string;
+  DashboardUrl, EnrollmentKey, AgentPath, EnrollmentFile, DashboardFile, TargetUserFile, AppDir, CommonDir: string;
   ResultCode: Integer;
 begin
   if CurStep <> ssPostInstall then Exit;
@@ -106,6 +106,7 @@ begin
   CommonDir := ExpandConstant('{commonappdata}\SuperWall');
   EnrollmentFile := CommonDir + '\enrollment.key';
   DashboardFile := CommonDir + '\dashboard.url';
+  TargetUserFile := CommonDir + '\target-user.txt';
 
   if not DirExists(CommonDir) then
     ForceDirectories(CommonDir);
@@ -116,10 +117,32 @@ begin
     EnrollmentKey := Trim(EnrollmentPage.Values[0]);
     SaveStringToFile(DashboardFile, DashboardUrl, False);
     SaveStringToFile(EnrollmentFile, EnrollmentKey, False);
+    SaveStringToFile(TargetUserFile, ExpandConstant('{username}'), False);
     RegWriteStringValue(HKEY_LOCAL_MACHINE,
       'SYSTEM\CurrentControlSet\Control\Session Manager\Environment',
       'SUPERWALL_DASHBOARD', DashboardUrl);
-  end;
+  end
+  else if not FileExists(TargetUserFile) then
+    SaveStringToFile(TargetUserFile, ExpandConstant('{username}'), False);
+
+  { Remove machine-wide policies written by SuperWall Kids 0.3.x/0.4.1.
+    New versions only write to the enrolled Windows user's HKU hive. }
+  RunHidden(ExpandConstant('{sysnative}\reg.exe'), 'delete "HKLM\SOFTWARE\Policies\Microsoft\Edge" /v ProxyMode /f');
+  RunHidden(ExpandConstant('{sysnative}\reg.exe'), 'delete "HKLM\SOFTWARE\Policies\Microsoft\Edge" /v ProxyServer /f');
+  RunHidden(ExpandConstant('{sysnative}\reg.exe'), 'delete "HKLM\SOFTWARE\Policies\Microsoft\Edge" /v DnsOverHttpsMode /f');
+  RunHidden(ExpandConstant('{sysnative}\reg.exe'), 'delete "HKLM\SOFTWARE\Policies\Microsoft\Edge" /v QuicAllowed /f');
+  RunHidden(ExpandConstant('{sysnative}\reg.exe'), 'delete "HKLM\SOFTWARE\Policies\Microsoft\Edge" /v BackgroundModeEnabled /f');
+  RunHidden(ExpandConstant('{sysnative}\reg.exe'), 'delete "HKLM\SOFTWARE\Policies\Microsoft\Edge" /v ExtensionInstallBlocklist /f');
+  RunHidden(ExpandConstant('{sysnative}\reg.exe'), 'delete "HKLM\SOFTWARE\Policies\Microsoft\Edge" /v DownloadRestrictions /f');
+  RunHidden(ExpandConstant('{sysnative}\reg.exe'), 'delete "HKLM\SOFTWARE\Policies\Microsoft\Edge" /v URLBlocklist /f');
+  RunHidden(ExpandConstant('{sysnative}\reg.exe'), 'delete "HKLM\SOFTWARE\Policies\Google\Chrome" /v ProxyMode /f');
+  RunHidden(ExpandConstant('{sysnative}\reg.exe'), 'delete "HKLM\SOFTWARE\Policies\Google\Chrome" /v ProxyServer /f');
+  RunHidden(ExpandConstant('{sysnative}\reg.exe'), 'delete "HKLM\SOFTWARE\Policies\Google\Chrome" /v DnsOverHttpsMode /f');
+  RunHidden(ExpandConstant('{sysnative}\reg.exe'), 'delete "HKLM\SOFTWARE\Policies\Google\Chrome" /v QuicAllowed /f');
+  RunHidden(ExpandConstant('{sysnative}\reg.exe'), 'delete "HKLM\SOFTWARE\Policies\Google\Chrome" /v BackgroundModeEnabled /f');
+  RunHidden(ExpandConstant('{sysnative}\reg.exe'), 'delete "HKLM\SOFTWARE\Policies\Google\Chrome" /v ExtensionInstallBlocklist /f');
+  RunHidden(ExpandConstant('{sysnative}\reg.exe'), 'delete "HKLM\SOFTWARE\Policies\Google\Chrome" /v DownloadRestrictions /f');
+  RunHidden(ExpandConstant('{sysnative}\reg.exe'), 'delete "HKLM\SOFTWARE\Policies\Google\Chrome" /v URLBlocklist /f');
 
   RunHidden(ExpandConstant('{sysnative}\icacls.exe'),
     '"' + CommonDir + '" /inheritance:r /grant:r "SYSTEM:(OI)(CI)(F)" "Administrators:(OI)(CI)(F)" "Users:(OI)(CI)(RX)" /deny "Users:(OI)(CI)(W,DC,WDAC,WEA)"');
@@ -129,6 +152,9 @@ begin
   if FileExists(DashboardFile) then
     RunHidden(ExpandConstant('{sysnative}\icacls.exe'),
       '"' + DashboardFile + '" /inheritance:r /grant:r "SYSTEM:(F)" "Administrators:(F)"');
+  if FileExists(TargetUserFile) then
+    RunHidden(ExpandConstant('{sysnative}\icacls.exe'),
+      '"' + TargetUserFile + '" /inheritance:r /grant:r "SYSTEM:(F)" "Administrators:(F)"');
   RunHidden(ExpandConstant('{sysnative}\icacls.exe'),
     '"' + AppDir + '" /inheritance:r /grant:r "SYSTEM:(OI)(CI)(F)" "Administrators:(OI)(CI)(F)" "Users:(OI)(CI)(RX)" /deny "Users:(OI)(CI)(W,DC,WDAC,WEA)"');
 
