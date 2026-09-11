@@ -119,9 +119,9 @@ begin
     SaveStringToFile(EnrollmentFile, EnrollmentKey, False);
 
     { The bootstrapper records the interactive account before UAC elevation.
-      Prefer that value over {username}, which can be the administrator that
-      approved the elevated installer. Fall back to {username} only when the
-      bootstrapper did not provide a target. }
+      Prefer that value over the elevated installer username, which can be the
+      administrator that approved the UAC prompt. Fall back to the installer
+      username only when the bootstrapper did not provide a target. }
     TargetUser := GetEnv('SUPERWALL_TARGET_USER');
     if Trim(TargetUser) = '' then
       TargetUser := ExpandConstant('{username}');
@@ -169,30 +169,11 @@ begin
   if FileExists(TargetUserFile) then
     RunHidden(ExpandConstant('{sysnative}\icacls.exe'),
       '"' + TargetUserFile + '" /inheritance:r /grant:r "SYSTEM:(F)" "Administrators:(F)"');
-  RunHidden(ExpandConstant('{sysnative}\icacls.exe'),
-    '"' + AppDir + '" /inheritance:r /grant:r "SYSTEM:(OI)(CI)(F)" "Administrators:(OI)(CI)(F)" "Users:(OI)(CI)(RX)" /deny "Users:(OI)(CI)(W,DC,WDAC,WEA)"');
 
-  Exec(ExpandConstant('{sysnative}\sc.exe'),
-    'stop SuperWallAgent', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
-  Exec(ExpandConstant('{sysnative}\sc.exe'),
-    'delete SuperWallAgent', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
-  Exec(ExpandConstant('{sysnative}\sc.exe'),
-    'create SuperWallAgent binPath= "' + AgentPath + '" start= auto obj= LocalSystem DisplayName= "SuperWall Kids"',
-    '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
-  Exec(ExpandConstant('{sysnative}\sc.exe'),
-    'description SuperWallAgent "SuperWall Kids offline-first parental control service"',
-    '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
-  Exec(ExpandConstant('{sysnative}\sc.exe'),
-    'sdset SuperWallAgent {#ServiceSddl}',
-    '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
-  Exec(ExpandConstant('{sysnative}\sc.exe'),
-    'failure SuperWallAgent reset= 86400 actions= restart/5000/restart/15000/restart/60000',
-    '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
-  Exec(ExpandConstant('{sysnative}\sc.exe'),
-    'failureflag SuperWallAgent 1', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
-  Exec(ExpandConstant('{sysnative}\sc.exe'),
-    'start SuperWallAgent', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
-
-  if not IsUpgrade then
-    MsgBox('SuperWall Kids is geïnstalleerd. De pc wordt automatisch met het dashboard gekoppeld zodra de enrollment key is geaccepteerd.', mbInformation, MB_OK);
+  RunHidden(ExpandConstant('{sysnative}\sc.exe'), 'stop SuperWallAgent');
+  RunHidden(ExpandConstant('{sysnative}\sc.exe'), 'delete SuperWallAgent');
+  RunHidden(ExpandConstant('{sysnative}\sc.exe'), 'create SuperWallAgent binPath= "' + AgentPath + '" start= auto obj= LocalSystem');
+  RunHidden(ExpandConstant('{sysnative}\sc.exe'), 'description SuperWallAgent "SuperWall Kids enforcement agent"');
+  RunHidden(ExpandConstant('{sysnative}\sc.exe'), 'sdset SuperWallAgent "{#ServiceSddl}"');
+  RunHidden(ExpandConstant('{sysnative}\sc.exe'), 'start SuperWallAgent');
 end;
