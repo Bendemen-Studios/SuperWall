@@ -1,9 +1,26 @@
 using System.Diagnostics;
 using System.Reflection;
+using System.Runtime.InteropServices;
 
 internal static class Program
 {
     private const string InnerName = "SuperWall-Kids-Inner.exe";
+
+    [DllImport("Wtsapi32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+    private static extern bool WTSQuerySessionInformation(
+        IntPtr hServer,
+        uint sessionId,
+        int wtsInfoClass,
+        out IntPtr ppBuffer,
+        out int pBytesReturned);
+
+    [DllImport("Wtsapi32.dll")]
+    private static extern void WTSFreeMemory(IntPtr pMemory);
+
+    [DllImport("kernel32.dll")]
+    private static extern uint WTSGetActiveConsoleSessionId();
+
+    private const int WtsUserName = 5;
 
     [STAThread]
     private static int Main(string[] args)
@@ -28,6 +45,8 @@ internal static class Program
                 stream.CopyTo(output);
             }
 
+            var targetUser = GetInteractiveUser();
+
             var psi = new ProcessStartInfo
             {
                 FileName = innerPath,
@@ -38,6 +57,8 @@ internal static class Program
 
             psi.Environment["TEMP"] = safeTemp;
             psi.Environment["TMP"] = safeTemp;
+            if (!string.IsNullOrWhiteSpace(targetUser))
+                psi.Environment["SUPERWALL_TARGET_USER"] = targetUser;
 
             using var process = Process.Start(psi)
                 ?? throw new InvalidOperationException("SuperWall installer kon niet worden gestart.");
@@ -58,6 +79,33 @@ internal static class Program
 
             return 1;
         }
+    }
+
+    private static string? GetInteractiveUser()
+    {
+        try
+        {
+            var sessionId = WTSGetActiveConsoleSessionId();
+            if (sessionId == uint.MaxValue) return null;
+            if (!WTSQuerySessionInformation(
+                    IntPtr.Zero,
+                    sessionId,
+                    WtsUserName,
+                    out var buffer,
+                    out _))
+                return null;
+
+            try
+            {
+                var user = Marshal.PtrToStringUni(buffer)?.Trim();
+                return string.IsNullOrWhiteSpace(user) ? null : user;
+            }
+            finally
+            {
+                WTSFreeMemory(buffer);
+            }
+        }
+        catch { return null; }
     }
 
     private static string QuoteArgument(string value)
