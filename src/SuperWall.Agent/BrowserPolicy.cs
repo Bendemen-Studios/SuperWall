@@ -10,7 +10,8 @@ public static class BrowserPolicy
         if (!OperatingSystem.IsWindows()) return;
         ApplyChromium(@"SOFTWARE\Policies\Microsoft\Edge", policy);
         ApplyChromium(@"SOFTWARE\Policies\Google\Chrome", policy);
-        ApplyFirefox(policy);
+        // Firefox's enterprise distribution policy is machine-wide. Do not
+        // write it here because SuperWall must not affect the parent's account.
     }
 
     public static void ClearEnforcement()
@@ -18,79 +19,68 @@ public static class BrowserPolicy
         if (!OperatingSystem.IsWindows()) return;
         ClearChromium(@"SOFTWARE\Policies\Microsoft\Edge");
         ClearChromium(@"SOFTWARE\Policies\Google\Chrome");
-        ClearFirefox();
     }
 
     private static void ApplyChromium(string path, SuperWallPolicy policy)
     {
-        Set(path, "ProxyMode", "fixed_servers");
-        Set(path, "ProxyServer", "127.0.0.1:18580");
-        Set(path, "DnsOverHttpsMode", "off");
-        Set(path, "QuicAllowed", 0);
-        Set(path, "BackgroundModeEnabled", 0);
-        Set(path, "ExtensionInstallBlocklist", new[] { "*" });
-        Set(path, "DownloadRestrictions", policy.DownloadsBlocked ? 3 : 0);
+        using var key = WindowsUserScope.OpenUserPolicyKey(path, true);
+        if (key is null) return;
 
-        if (policy.UrlBlockingEnabled)
+        try
         {
-            var blocked = policy.BlockedDomains
-                .Where(IsValidDomain)
-                .SelectMany(d => new[] { $"*://{d}/*", $"*://*.{d}/*" })
-                .Distinct(StringComparer.OrdinalIgnoreCase)
-                .ToArray();
-            if (blocked.Length > 0) Set(path, "URLBlocklist", blocked);
-            else Delete(path, "URLBlocklist");
+            if (policy.UrlBlockingEnabled)
+            {
+                key.SetValue("ProxyMode", "fixed_servers");
+                key.SetValue("ProxyServer", "127.0.0.1:18580");
+                key.SetValue("DnsOverHttpsMode", "off");
+                key.SetValue("QuicAllowed", 0, RegistryValueKind.DWord);
+                key.SetValue("BackgroundModeEnabled", 0, RegistryValueKind.DWord);
+                key.SetValue("ExtensionInstallBlocklist", new[] { "*" }, RegistryValueKind.MultiString);
+
+                var blocked = policy.BlockedDomains
+                    .Where(IsValidDomain)
+                    .SelectMany(d => new[] { $"*://{d}/*", $"*://*.{d}/*" })
+                    .Distinct(StringComparer.OrdinalIgnoreCase)
+                    .ToArray();
+                if (blocked.Length > 0) key.SetValue("URLBlocklist", blocked, RegistryValueKind.MultiString);
+                else key.DeleteValue("URLBlocklist", false);
+            }
+            else
+            {
+                Delete(key, "ProxyMode");
+                Delete(key, "ProxyServer");
+                Delete(key, "DnsOverHttpsMode");
+                Delete(key, "QuicAllowed");
+                Delete(key, "BackgroundModeEnabled");
+                Delete(key, "ExtensionInstallBlocklist");
+                Delete(key, "URLBlocklist");
+            }
+
+            key.SetValue("DownloadRestrictions", policy.DownloadsBlocked ? 3 : 0, RegistryValueKind.DWord);
         }
-        else
-        {
-            Delete(path, "URLBlocklist");
-        }
+        catch { }
     }
 
     private static void ClearChromium(string path)
     {
-        Delete(path, "ProxyMode");
-        Delete(path, "ProxyServer");
-        Delete(path, "DnsOverHttpsMode");
-        Delete(path, "QuicAllowed");
-        Delete(path, "BackgroundModeEnabled");
-        Delete(path, "ExtensionInstallBlocklist");
-        Delete(path, "DownloadRestrictions");
-        Delete(path, "URLBlocklist");
+        using var key = WindowsUserScope.OpenUserPolicyKey(path, true);
+        if (key is null) return;
+        Delete(key, "ProxyMode");
+        Delete(key, "ProxyServer");
+        Delete(key, "DnsOverHttpsMode");
+        Delete(key, "QuicAllowed");
+        Delete(key, "BackgroundModeEnabled");
+        Delete(key, "ExtensionInstallBlocklist");
+        Delete(key, "DownloadRestrictions");
+        Delete(key, "URLBlocklist");
     }
 
-    private static void ApplyFirefox(SuperWallPolicy policy)
+    private static void Delete(RegistryKey key, string name)
     {
-        try
-        {
-            var dir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), "Mozilla Firefox", "distribution");
-            Directory.CreateDirectory(dir);
-            var json = "{\"policies\":{\"DisableTelemetry\":true,\"Preferences\":{\"network.trr.mode\":{\"Value\":5},\"network.http.http3.enabled\":{\"Value\":false}},\"Proxy\":{\"Mode\":\"manual\",\"HTTPProxy\":\"127.0.0.1\",\"HTTPPort\":18580,\"SSLProxy\":\"127.0.0.1\",\"SSLProxyPort\":18580,\"UseHTTPProxyForAllProtocols\":true,\"Passthrough\":\"<local>\"}}}";
-            File.WriteAllText(Path.Combine(dir, "policies.json"), json);
-        }
-        catch { }
-    }
-
-    private static void ClearFirefox()
-    {
-        try
-        {
-            var path = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), "Mozilla Firefox", "distribution", "policies.json");
-            if (File.Exists(path)) File.Delete(path);
-        }
-        catch { }
-    }
-
-    private static void Set(string path, string name, object value)
-    {
-        try { using var key = Registry.LocalMachine.CreateSubKey(path); key?.SetValue(name, value); } catch { }
-    }
-
-    private static void Delete(string path, string name)
-    {
-        try { Registry.LocalMachine.OpenSubKey(path, true)?.DeleteValue(name, false); } catch { }
+        try { key.DeleteValue(name, false); } catch { }
     }
 
     private static bool IsValidDomain(string d) =>
-        d.Length <= 253 && d.Contains('.') && d.All(c => char.IsLetterOrDigit(c) || c is '.' or '-');
+        !string.IsNullOrWhiteSpace(d) && d.Length <= 253 && d.Contains('.') &&
+        d.All(c => char.IsLetterOrDigit(c) || c is '.' or '-');
 }
