@@ -1,20 +1,45 @@
+using System.Text.Json.Serialization;
+
 namespace SuperWall.Contracts;
 
 public enum RiskProfile { Low, High }
 
 public sealed class SuperWallPolicy
 {
+    [JsonPropertyName("version")]
     public long Version { get; set; } = 1;
+
+    [JsonPropertyName("profile")]
     public RiskProfile Profile { get; set; } = RiskProfile.Low;
+
+    [JsonPropertyName("urlBlockingEnabled")]
     public bool UrlBlockingEnabled { get; set; } = true;
+
+    [JsonPropertyName("blockedDomains")]
     public List<string> BlockedDomains { get; set; } = new() { "tiktok.com", "youtube.com", "roblox.com", "pornhub.com" };
+
+    [JsonPropertyName("searchHistoryEnabled")]
     public bool SearchHistoryEnabled { get; set; } = true;
+
+    [JsonPropertyName("searchHistoryRetentionDays")]
     public int SearchHistoryRetentionDays => Profile == RiskProfile.High ? 30 : 14;
+
+    [JsonPropertyName("downloadsBlocked")]
     public bool DownloadsBlocked { get; set; } = true;
+
+    [JsonPropertyName("downloadPinHash")]
     public string DownloadPinHash { get; set; } = "";
+
+    [JsonPropertyName("downloadPinSalt")]
     public string DownloadPinSalt { get; set; } = "";
+
+    [JsonPropertyName("dashboardUrl")]
     public string DashboardUrl { get; set; } = "https://superwall.hvmc.nl";
+
+    [JsonPropertyName("lockBrowserInstallation")]
     public bool LockBrowserInstallation { get; set; } = true;
+
+    [JsonPropertyName("blockPortableBrowsers")]
     public bool BlockPortableBrowsers { get; set; } = true;
 }
 
