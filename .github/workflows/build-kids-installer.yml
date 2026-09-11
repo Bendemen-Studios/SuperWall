@@ -54,14 +54,14 @@ jobs:
       - name: Verify installer
         shell: pwsh
         run: |
-          $installer = 'publish/installer/SuperWall-Kids-Setup-0.4.0.exe'
+          $installer = 'publish/installer/SuperWall-Kids-Setup-0.4.1.exe'
           if (-not (Test-Path $installer)) { throw "Installer not found: $installer" }
           if ((Get-Item $installer).Length -lt 1MB) { throw 'Installer unexpectedly small.' }
 
       - name: Generate SHA256
         shell: pwsh
         run: |
-          (Get-FileHash publish/installer/SuperWall-Kids-Setup-0.4.0.exe -Algorithm SHA256).Hash | Out-File publish/installer/SHA256.txt
+          (Get-FileHash publish/installer/SuperWall-Kids-Setup-0.4.1.exe -Algorithm SHA256).Hash | Out-File publish/installer/SHA256.txt
 
       - name: Upload installer artifact
         uses: actions/upload-artifact@v4
@@ -74,13 +74,16 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           files: |
-            publish/installer/SuperWall-Kids-Setup-0.4.0.exe
+            publish/installer/SuperWall-Kids-Setup-0.4.1.exe
             publish/installer/SHA256.txt
           body: |
-            ## SuperWall Kids 0.4.0
+            ## SuperWall Kids 0.4.1
 
             Windows client installer for SuperWall.
 
+            - Keeps the agent alive if the local blocking proxy cannot bind immediately
+            - Retries starting the local proxy during policy sync instead of crashing the service
+            - Explicitly clears Chromium download restrictions when downloads are disabled
             - Secure automatic update checks every 6 hours
             - Updates only to a newer stable Kids release
             - SHA256 verification before installation
