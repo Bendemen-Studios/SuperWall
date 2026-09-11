@@ -43,6 +43,7 @@ public sealed class AutoUpdater
             }
             if (installer is null) return;
 
+            Directory.CreateDirectory(_stateDir);
             var tempInstaller = Path.Combine(_stateDir, $"SuperWall-Kids-Setup-{latest}.exe");
             await DownloadAsync(installer.Value.GetProperty("browser_download_url").GetString()!, tempInstaller, ct);
 
@@ -61,10 +62,10 @@ public sealed class AutoUpdater
             var psi = new ProcessStartInfo
             {
                 FileName = tempInstaller,
-                // Inno Setup expects the upgrade parameter to have a value.
+                // Let the bootstrapper start the real Inno installer without pre-elevating it.
+                // This allows the bootstrapper to provide a writable TEMP/TMP location first.
                 Arguments = "/UPGRADE=1 /VERYSILENT /SUPPRESSMSGBOXES /NORESTART",
-                UseShellExecute = true,
-                Verb = "runas",
+                UseShellExecute = false,
                 WorkingDirectory = Path.GetDirectoryName(tempInstaller) ?? _stateDir
             };
             Process.Start(psi);
