@@ -13,6 +13,14 @@ public static class BrowserPolicy
         ApplyFirefox(policy);
     }
 
+    public static void ClearEnforcement()
+    {
+        if (!OperatingSystem.IsWindows()) return;
+        ClearChromium(@"SOFTWARE\Policies\Microsoft\Edge");
+        ClearChromium(@"SOFTWARE\Policies\Google\Chrome");
+        ClearFirefox();
+    }
+
     private static void ApplyChromium(string path, SuperWallPolicy policy)
     {
         Set(path, "ProxyMode", "fixed_servers");
@@ -21,10 +29,6 @@ public static class BrowserPolicy
         Set(path, "QuicAllowed", 0);
         Set(path, "BackgroundModeEnabled", 0);
         Set(path, "ExtensionInstallBlocklist", new[] { "*" });
-
-        // Explicitly set 0 when downloads are allowed. Deleting the policy is
-        // not enough on every Chromium/Windows policy refresh path and could
-        // leave a previously enforced DownloadRestrictions=3 active.
         Set(path, "DownloadRestrictions", policy.DownloadsBlocked ? 3 : 0);
 
         if (policy.UrlBlockingEnabled)
@@ -43,6 +47,18 @@ public static class BrowserPolicy
         }
     }
 
+    private static void ClearChromium(string path)
+    {
+        Delete(path, "ProxyMode");
+        Delete(path, "ProxyServer");
+        Delete(path, "DnsOverHttpsMode");
+        Delete(path, "QuicAllowed");
+        Delete(path, "BackgroundModeEnabled");
+        Delete(path, "ExtensionInstallBlocklist");
+        Delete(path, "DownloadRestrictions");
+        Delete(path, "URLBlocklist");
+    }
+
     private static void ApplyFirefox(SuperWallPolicy policy)
     {
         try
@@ -51,6 +67,16 @@ public static class BrowserPolicy
             Directory.CreateDirectory(dir);
             var json = "{\"policies\":{\"DisableTelemetry\":true,\"Preferences\":{\"network.trr.mode\":{\"Value\":5},\"network.http.http3.enabled\":{\"Value\":false}},\"Proxy\":{\"Mode\":\"manual\",\"HTTPProxy\":\"127.0.0.1\",\"HTTPPort\":18580,\"SSLProxy\":\"127.0.0.1\",\"SSLProxyPort\":18580,\"UseHTTPProxyForAllProtocols\":true,\"Passthrough\":\"<local>\"}}}";
             File.WriteAllText(Path.Combine(dir, "policies.json"), json);
+        }
+        catch { }
+    }
+
+    private static void ClearFirefox()
+    {
+        try
+        {
+            var path = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), "Mozilla Firefox", "distribution", "policies.json");
+            if (File.Exists(path)) File.Delete(path);
         }
         catch { }
     }
