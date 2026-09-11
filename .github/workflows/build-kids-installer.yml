@@ -55,18 +55,18 @@ jobs:
           New-Item -ItemType Directory -Force publish/installer/inner | Out-Null
           & $iscc installer/SuperWallKids.iss
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          $innerInstaller = 'publish/installer/SuperWall-Kids-Setup-0.4.8.exe'
-          if (-not (Test-Path -LiteralPath $innerInstaller)) { throw "Inner installer was not created: $innerInstaller" }
-          Move-Item $innerInstaller publish/installer/inner/SuperWall-Kids-Inner.exe -Force
+          $innerInstaller = Get-ChildItem -Path 'publish/installer' -Filter 'SuperWall-Kids-Setup-*.exe' -File | Select-Object -First 1
+          if (-not $innerInstaller) { throw 'Inner installer was not created.' }
+          Move-Item -LiteralPath $innerInstaller.FullName -Destination 'publish/installer/inner/SuperWall-Kids-Inner.exe' -Force
 
       - name: Build temp-safe single-file bootstrapper
         shell: pwsh
         run: |
           dotnet publish installer/Bootstrapper/SuperWallInstallerBootstrapper.csproj -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -o publish/installer/bootstrapper
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          $bootstrapper = 'publish/installer/bootstrapper/SuperWallInstallerBootstrapper.exe'
-          if (-not (Test-Path -LiteralPath $bootstrapper)) { throw "Bootstrapper executable was not created: $bootstrapper" }
-          Copy-Item $bootstrapper publish/installer/SuperWall-Kids-Setup-0.4.8.exe -Force
+          $bootstrapper = Get-ChildItem -Path 'publish/installer/bootstrapper' -Filter '*.exe' -File | Select-Object -First 1
+          if (-not $bootstrapper) { throw 'Bootstrapper executable was not created.' }
+          Copy-Item -LiteralPath $bootstrapper.FullName -Destination 'publish/installer/SuperWall-Kids-Setup-0.4.8.exe' -Force
           Remove-Item publish/installer/bootstrapper -Recurse -Force
           Remove-Item publish/installer/inner -Recurse -Force
 
@@ -74,7 +74,7 @@ jobs:
         shell: pwsh
         run: |
           $installer = 'publish/installer/SuperWall-Kids-Setup-0.4.8.exe'
-          if (-not (Test-Path $installer)) { throw "Installer not found: $installer" }
+          if (-not (Test-Path -LiteralPath $installer)) { throw "Installer not found: $installer" }
           if ((Get-Item $installer).Length -lt 1MB) { throw 'Installer unexpectedly small.' }
           $bytes = [IO.File]::ReadAllBytes($installer)
           if ($bytes.Length -lt 2 -or $bytes[0] -ne 0x4D -or $bytes[1] -ne 0x5A) { throw 'Installer is not a valid Windows executable.' }
