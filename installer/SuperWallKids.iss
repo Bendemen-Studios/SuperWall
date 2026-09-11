@@ -39,7 +39,8 @@ function IsUpgrade: Boolean;
 begin
   Result := CompareText(ExpandConstant('{param:UPGRADE|}'), '1') = 0;
   if not Result then
-    Result := FileExists(ExpandConstant('{app}\{#MyExeName}')) or FileExists(ExpandConstant('{commonappdata}\SuperWall\target-user.txt'));
+    Result := FileExists(ExpandConstant('{autopf}\SuperWall Kids\{#MyExeName}')) or
+      FileExists(ExpandConstant('{commonappdata}\SuperWall\target-user.txt'));
 end;
 
 function IsValidHttpsUrl(const Value: string): Boolean;
@@ -101,7 +102,6 @@ var
   DashboardUrl, EnrollmentKey, AgentPath, EnrollmentFile, DashboardFile, TargetUserFile, CommonDir, TargetUser: string;
   WaitCount: Integer;
 begin
-  { On upgrades the service must be stopped before Inno copies the new agent over it. }
   if (CurStep = ssInstall) and IsUpgrade then
   begin
     RunHidden(ExpandConstant('{sysnative}\sc.exe'), 'stop SuperWallAgent');
@@ -148,7 +148,6 @@ begin
     SaveStringToFile(TargetUserFile, TargetUser, False);
   end;
 
-  { Remove machine-wide policies written by older SuperWall Kids versions. }
   RunHidden(ExpandConstant('{sysnative}\reg.exe'), 'delete "HKLM\SOFTWARE\Policies\Microsoft\Edge" /v ProxyMode /f');
   RunHidden(ExpandConstant('{sysnative}\reg.exe'), 'delete "HKLM\SOFTWARE\Policies\Microsoft\Edge" /v ProxyServer /f');
   RunHidden(ExpandConstant('{sysnative}\reg.exe'), 'delete "HKLM\SOFTWARE\Policies\Microsoft\Edge" /v DnsOverHttpsMode /f');
