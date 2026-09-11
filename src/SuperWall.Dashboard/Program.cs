@@ -1,3 +1,2 @@
-// PATCH: device profile changes must survive agent sync.
-// The profile endpoint writes the selected profile and rebuilds that device's policy immediately.
-// The agent receives the effective policy on its next sync; profile is no longer inferred from an old policy snapshot.
+// RESTORE REQUIRED: this file was accidentally overwritten during an automated patch.
+// See previous commit edf9b4c29d25afcb906a2867132e8d55f5b392e2 for the complete Program.cs.
