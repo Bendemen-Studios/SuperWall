@@ -1,5 +1,5 @@
 #define MyAppName "SuperWall Kids"
-#define MyAppVersion "0.4.2"
+#define MyAppVersion "0.4.3"
 #define MyPublisher "Bendemen Studios"
 #define MyExeName "SuperWall.Agent.exe"
 #define ServiceSddl "D:(A;;CCLCSWRPWPDTLOCRRC;;;SY)(A;;CCDCLCSWRPWPDTLOCRSDRCWDWO;;;BA)(A;;CCLCRP;;;AU)"
@@ -125,7 +125,7 @@ begin
   else if not FileExists(TargetUserFile) then
     SaveStringToFile(TargetUserFile, ExpandConstant('{username}'), False);
 
-  { Remove machine-wide policies written by SuperWall Kids 0.3.x/0.4.1.
+  { Remove machine-wide policies written by older SuperWall Kids versions.
     New versions only write to the enrolled Windows user's HKU hive. }
   RunHidden(ExpandConstant('{sysnative}\reg.exe'), 'delete "HKLM\SOFTWARE\Policies\Microsoft\Edge" /v ProxyMode /f');
   RunHidden(ExpandConstant('{sysnative}\reg.exe'), 'delete "HKLM\SOFTWARE\Policies\Microsoft\Edge" /v ProxyServer /f');
