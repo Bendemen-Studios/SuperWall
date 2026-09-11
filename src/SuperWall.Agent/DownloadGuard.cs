@@ -1,4 +1,5 @@
 using SuperWall.Contracts;
+using Microsoft.Win32;
 
 namespace SuperWall.Agent;
 
@@ -33,34 +34,29 @@ public static class DownloadGuard
         BrowserPolicy.Apply(policy);
         DeleteState();
 
-        foreach (var downloads in FindDownloadDirectories())
+        var downloads = FindTargetDownloadDirectory();
+        if (downloads is null) return;
+
+        try
         {
-            try
+            foreach (var file in Directory.EnumerateFiles(downloads).Where(IsLikelyDownload))
             {
-                foreach (var file in Directory.EnumerateFiles(downloads).Where(IsLikelyDownload))
-                {
-                    var quarantine = Path.Combine(StateDir, "Quarantine");
-                    Directory.CreateDirectory(quarantine);
-                    var target = Path.Combine(quarantine, Path.GetFileName(file));
-                    if (File.Exists(target)) target = Path.Combine(quarantine, $"{Guid.NewGuid():N}-{Path.GetFileName(file)}");
-                    File.Move(file, target);
-                }
+                var quarantine = Path.Combine(StateDir, "Quarantine");
+                Directory.CreateDirectory(quarantine);
+                var target = Path.Combine(quarantine, Path.GetFileName(file));
+                if (File.Exists(target)) target = Path.Combine(quarantine, $"{Guid.NewGuid():N}-{Path.GetFileName(file)}");
+                File.Move(file, target);
             }
-            catch { }
         }
+        catch { }
     }
 
-    private static IEnumerable<string> FindDownloadDirectories()
+    private static string? FindTargetDownloadDirectory()
     {
-        var root = Path.Combine(Environment.GetEnvironmentVariable("SystemDrive") ?? "C:", "Users");
-        if (!Directory.Exists(root)) yield break;
-        foreach (var user in Directory.EnumerateDirectories(root))
-        {
-            var name = Path.GetFileName(user);
-            if (string.Equals(name, "Default", StringComparison.OrdinalIgnoreCase) || string.Equals(name, "Public", StringComparison.OrdinalIgnoreCase)) continue;
-            var downloads = Path.Combine(user, "Downloads");
-            if (Directory.Exists(downloads)) yield return downloads;
-        }
+        var profile = WindowsUserScope.ProfilePath();
+        if (string.IsNullOrWhiteSpace(profile)) return null;
+        var downloads = Path.Combine(profile, "Downloads");
+        return Directory.Exists(downloads) ? downloads : null;
     }
 
     private static bool IsLikelyDownload(string path) => !path.EndsWith(".crdownload", StringComparison.OrdinalIgnoreCase)
