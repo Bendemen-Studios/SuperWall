@@ -37,6 +37,16 @@ public static class LocalSecrets
         catch { return false; }
     }
 
+    public static void Delete(string name)
+    {
+        try
+        {
+            var path = Path.Combine(Root, name + ".bin");
+            if (File.Exists(path)) File.Delete(path);
+        }
+        catch { }
+    }
+
     private static void HardenAcl(string path)
     {
         if (!OperatingSystem.IsWindows()) return;
