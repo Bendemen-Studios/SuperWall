@@ -1,5 +1,5 @@
 #define MyAppName "SuperWall Kids"
-#define MyAppVersion "0.4.6"
+#define MyAppVersion "0.4.7"
 #define MyPublisher "Bendemen Studios"
 #define MyExeName "SuperWall.Agent.exe"
 #define ServiceSddl "D:(A;;CCLCSWRPWPDTLOCRRC;;;SY)(A;;CCDCLCSWRPWPDTLOCRSDRCWDWO;;;BA)(A;;CCLCRP;;;AU)"
@@ -97,12 +97,18 @@ end;
 procedure CurStepChanged(CurStep: TSetupStep);
 var
   DashboardUrl, EnrollmentKey, AgentPath, EnrollmentFile, DashboardFile, TargetUserFile, CommonDir, TargetUser: string;
+  WaitCount: Integer;
 begin
   { Stop the existing service before Inno replaces SuperWall.Agent.exe. }
   if (CurStep = ssInstall) and IsUpgrade then
   begin
     RunHidden(ExpandConstant('{sysnative}\sc.exe'), 'stop SuperWallAgent');
-    Sleep(1500);
+    WaitCount := 0;
+    while WaitCount < 25 do
+    begin
+      Sleep(200);
+      Inc(WaitCount);
+    end;
   end;
 
   if CurStep <> ssPostInstall then Exit;
