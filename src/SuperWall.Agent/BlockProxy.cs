@@ -52,31 +52,19 @@ public sealed class BlockProxy : IDisposable
             string host;
             Uri? requestUri = null;
 
-            if (connect)
-            {
-                host = parts[1].Split(':')[0];
-            }
+            if (connect) host = parts[1].Split(':')[0];
             else
             {
-                try
-                {
-                    requestUri = new Uri(parts[1], UriKind.Absolute);
-                    host = requestUri.Host;
-                }
+                try { requestUri = new Uri(parts[1], UriKind.Absolute); host = requestUri.Host; }
                 catch { return; }
             }
 
-            if (_isBlocked(host))
-            {
-                await Deny(stream, ct);
-                return;
-            }
+            if (_isBlocked(host)) { await Deny(stream, ct); return; }
 
             if (connect)
             {
                 using var upstream = new TcpClient();
-                try { await upstream.ConnectAsync(host, 443, ct); }
-                catch { return; }
+                try { await upstream.ConnectAsync(host, 443, ct); } catch { return; }
                 using var upstreamStream = upstream.GetStream();
                 await stream.WriteAsync(Encoding.ASCII.GetBytes("HTTP/1.1 200 Connection Established\r\n\r\n"), ct);
                 var t1 = stream.CopyToAsync(upstreamStream, ct);
@@ -85,10 +73,8 @@ public sealed class BlockProxy : IDisposable
                 return;
             }
 
-            // Handle plain HTTP requests so redirects cannot point at a blocked host unnoticed.
             using var httpUpstream = new TcpClient();
-            try { await httpUpstream.ConnectAsync(host, requestUri!.Port > 0 ? requestUri.Port : 80, ct); }
-            catch { return; }
+            try { await httpUpstream.ConnectAsync(host, requestUri!.Port > 0 ? requestUri.Port : 80, ct); } catch { return; }
             using var httpStream = httpUpstream.GetStream();
             await httpStream.WriteAsync(buffer.AsMemory(0, read), ct);
 
@@ -99,26 +85,18 @@ public sealed class BlockProxy : IDisposable
                 var n = await httpStream.ReadAsync(temp, ct);
                 if (n <= 0) break;
                 ms.Write(temp, 0, n);
-                if (ms.Length >= 4)
-                {
-                    var tail = Encoding.ASCII.GetString(ms.GetBuffer(), 0, (int)ms.Length);
-                    if (tail.Contains("\r\n\r\n", StringComparison.Ordinal)) break;
-                }
+                var current = Encoding.ASCII.GetString(ms.GetBuffer(), 0, (int)ms.Length);
+                if (current.Contains("\r\n\r\n", StringComparison.Ordinal)) break;
             }
 
             var responseBytes = ms.ToArray();
-            var responseHeader = Encoding.ASCII.GetString(responseBytes);
-            var location = GetHeader(responseHeader, "Location");
+            var location = GetHeader(Encoding.ASCII.GetString(responseBytes), "Location");
             if (!string.IsNullOrWhiteSpace(location))
             {
                 try
                 {
                     var target = new Uri(requestUri!, location);
-                    if (_isBlocked(target.Host))
-                    {
-                        await Deny(stream, ct);
-                        return;
-                    }
+                    if (_isBlocked(target.Host)) { await Deny(stream, ct); return; }
                 }
                 catch { }
             }
@@ -141,8 +119,10 @@ public sealed class BlockProxy : IDisposable
         return null;
     }
 
-    private static Task Deny(NetworkStream stream, CancellationToken ct) =>
-        stream.WriteAsync(Encoding.ASCII.GetBytes("HTTP/1.1 403 Forbidden\r\nConnection: close\r\nContent-Length: 0\r\n\r\n"), ct).AsTask();
+    private static async Task Deny(NetworkStream stream, CancellationToken ct)
+    {
+        await stream.WriteAsync(Encoding.ASCII.GetBytes("HTTP/1.1 403 Forbidden\r\nConnection: close\r\nContent-Length: 0\r\n\r\n"), ct);
+    }
 
     public void Dispose()
     {
