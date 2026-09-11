@@ -33,6 +33,11 @@ public static class BrowserPolicy
                 .Distinct(StringComparer.OrdinalIgnoreCase)
                 .ToArray();
             if (blocked.Length > 0) Set(path, "URLBlocklist", blocked);
+            else Delete(path, "URLBlocklist");
+        }
+        else
+        {
+            Delete(path, "URLBlocklist");
         }
     }
 
