@@ -27,6 +27,7 @@ public sealed class PolicySyncService : BackgroundService
     {
         Directory.CreateDirectory(_stateDir);
         SecurityHardening.Apply();
+        NetworkHardening.ClearLegacyMachineEnforcement();
         LoadCached();
 
         await SyncOnce(stoppingToken);
@@ -202,9 +203,6 @@ public sealed class PolicySyncService : BackgroundService
             _proxy = null;
         }
 
-        // Browser policy and the localhost proxy are user-scoped. Do not use
-        // hosts/firewall/DNS hardening here because those controls affect every
-        // Windows account on the machine, including the parent's account.
         DownloadGuard.SetEnabled(_policy.DownloadsBlocked, _policy);
     }
 
