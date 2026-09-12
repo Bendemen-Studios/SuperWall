@@ -1,5 +1,6 @@
 using System.Net;
 using System.Security.Principal;
+using System.Text;
 using System.Text.Json;
 
 namespace SuperWall.Agent;
@@ -41,7 +42,14 @@ public sealed class LocalControlServer : IDisposable
         ctx.Response.Headers["X-Content-Type-Options"] = "nosniff";
         try
         {
-            if (ctx.Request.HttpMethod == "GET" && ctx.Request.Url?.AbsolutePath == "/status")
+            var path = ctx.Request.Url?.AbsolutePath;
+            if (ctx.Request.HttpMethod == "GET" && path == "/")
+            {
+                await WriteHtml(ctx);
+                return;
+            }
+
+            if (ctx.Request.HttpMethod == "GET" && path == "/status")
             {
                 await WriteJson(ctx, 200, new
                 {
@@ -52,7 +60,7 @@ public sealed class LocalControlServer : IDisposable
                 return;
             }
 
-            if (ctx.Request.HttpMethod == "POST" && ctx.Request.Url?.AbsolutePath == "/downloads/unlock")
+            if (ctx.Request.HttpMethod == "POST" && path == "/downloads/unlock")
             {
                 if (!IsLocalWindowsAdministrator(ctx))
                 {
@@ -60,6 +68,7 @@ public sealed class LocalControlServer : IDisposable
                     return;
                 }
 
+                // One administrator approval opens downloads only until the next policy-enforced timeout.
                 var duration = TimeSpan.FromMinutes(15);
                 if (!DownloadGuard.GrantTemporaryUnlock(duration))
                 {
@@ -77,7 +86,7 @@ public sealed class LocalControlServer : IDisposable
                 return;
             }
 
-            if (ctx.Request.HttpMethod == "POST" && ctx.Request.Url?.AbsolutePath == "/downloads/lock")
+            if (ctx.Request.HttpMethod == "POST" && path == "/downloads/lock")
             {
                 if (!IsLocalWindowsAdministrator(ctx))
                 {
@@ -96,12 +105,32 @@ public sealed class LocalControlServer : IDisposable
         finally { ctx.Response.Close(); }
     }
 
+    private async Task WriteHtml(HttpListenerContext ctx)
+    {
+        var html = """<!doctype html>
+<html lang="nl"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>SuperWall - Downloads</title>
+<style>body{font-family:system-ui,sans-serif;max-width:560px;margin:60px auto;padding:24px;background:#f5f5f5;color:#111}main{background:#fff;border-radius:16px;padding:28px;box-shadow:0 8px 30px #0001}button{border:0;border-radius:10px;padding:12px 18px;font-weight:700;cursor:pointer;margin-right:8px}#unlock{background:#111;color:#fff}#lock{background:#ddd}#status{margin:18px 0;font-weight:600}.hint{color:#666;font-size:14px}</style></head>
+<body><main><h1>SuperWall</h1><h2>Downloads</h2><div id="status">Status wordt geladen…</div><button id="unlock">Download één keer toestaan</button><button id="lock">Direct weer blokkeren</button><p class="hint">Alleen een Windows-administrator kan dit wijzigen. De toestemming verloopt automatisch na 15 minuten.</p></main>
+<script>
+const statusEl=document.getElementById('status');
+async function status(){try{const r=await fetch('/status',{cache:'no-store'});const x=await r.json();statusEl.textContent=x.downloadsUnlocked?'Downloads tijdelijk toegestaan':'Downloads geblokkeerd';}catch(e){statusEl.textContent='Agent niet bereikbaar';}}
+document.getElementById('unlock').onclick=async()=>{const r=await fetch('/downloads/unlock',{method:'POST'});const x=await r.json();if(!r.ok)alert(x.error||'Toestaan mislukt');await status();};
+document.getElementById('lock').onclick=async()=>{const r=await fetch('/downloads/lock',{method:'POST'});const x=await r.json();if(!r.ok)alert(x.error||'Blokkeren mislukt');await status();};
+status();setInterval(status,5000);
+</script></body></html>""";
+        var bytes = Encoding.UTF8.GetBytes(html);
+        ctx.Response.ContentType = "text/html; charset=utf-8";
+        ctx.Response.StatusCode = 200;
+        ctx.Response.ContentLength64 = bytes.Length;
+        await ctx.Response.OutputStream.WriteAsync(bytes);
+    }
+
     private static bool IsLocalWindowsAdministrator(HttpListenerContext ctx)
     {
         try
         {
             if (!OperatingSystem.IsWindows()) return false;
-            if (ctx.User?.Identity is not System.Security.Principal.WindowsIdentity identity || !identity.IsAuthenticated) return false;
+            if (ctx.User?.Identity is not WindowsIdentity identity || !identity.IsAuthenticated) return false;
             return new WindowsPrincipal(identity).IsInRole(WindowsBuiltInRole.Administrator);
         }
         catch { return false; }
@@ -109,7 +138,7 @@ public sealed class LocalControlServer : IDisposable
 
     private static async Task WriteJson(HttpListenerContext ctx, int status, object value)
     {
-        var bytes = System.Text.Encoding.UTF8.GetBytes(JsonSerializer.Serialize(value));
+        var bytes = Encoding.UTF8.GetBytes(JsonSerializer.Serialize(value));
         ctx.Response.ContentType = "application/json; charset=utf-8";
         ctx.Response.StatusCode = status;
         ctx.Response.ContentLength64 = bytes.Length;
