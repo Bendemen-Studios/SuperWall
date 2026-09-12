@@ -9,16 +9,14 @@ public sealed class SearchHistoryCollector
     {
         var since = DateTimeOffset.UtcNow.AddDays(-retentionDays);
         var result = new List<HistoryRecord>();
-        var root = Path.Combine(Environment.GetEnvironmentVariable("SystemDrive") ?? "C:", "Users");
-        if (!Directory.Exists(root)) return result;
+        var profile = WindowsUserScope.ProfilePath();
+        if (string.IsNullOrWhiteSpace(profile) || !Directory.Exists(profile)) return result;
 
-        foreach (var profile in Directory.EnumerateDirectories(root))
-        {
-            var local = Path.Combine(profile, "AppData", "Local");
-            result.AddRange(ReadChromium(Path.Combine(local, "Google", "Chrome", "User Data", "Default", "History"), "Chrome", since));
-            result.AddRange(ReadChromium(Path.Combine(local, "Microsoft", "Edge", "User Data", "Default", "History"), "Edge", since));
-            result.AddRange(ReadFirefox(Path.Combine(profile, "AppData", "Roaming", "Mozilla", "Firefox", "Profiles"), since));
-        }
+        var local = Path.Combine(profile, "AppData", "Local");
+        result.AddRange(ReadChromium(Path.Combine(local, "Google", "Chrome", "User Data", "Default", "History"), "Chrome", since));
+        result.AddRange(ReadChromium(Path.Combine(local, "Microsoft", "Edge", "User Data", "Default", "History"), "Edge", since));
+        result.AddRange(ReadFirefox(Path.Combine(profile, "AppData", "Roaming", "Mozilla", "Firefox", "Profiles"), since));
+
         return result.OrderByDescending(x => x.VisitedUtc).Take(25000).ToList();
     }
 
