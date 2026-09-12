@@ -6,6 +6,7 @@ namespace SuperWall.Agent;
 
 public sealed class BlockProxy : IDisposable
 {
+    private const int MaxHeaderBytes = 65536;
     private readonly TcpListener _listener;
     private readonly Func<string, bool> _isBlocked;
     private CancellationTokenSource? _cts;
@@ -18,6 +19,7 @@ public sealed class BlockProxy : IDisposable
 
     public void Start()
     {
+        if (_cts is not null) return;
         _cts = new CancellationTokenSource();
         _listener.Start();
         _ = AcceptLoop(_cts.Token);
@@ -37,86 +39,105 @@ public sealed class BlockProxy : IDisposable
     private async Task Handle(TcpClient client, CancellationToken ct)
     {
         using (client)
-        using (NetworkStream stream = client.GetStream())
+        using var stream = client.GetStream();
+
+        var request = await ReadHeadersAsync(stream, ct);
+        if (request is null) return;
+
+        var firstLine = request.Value.HeaderText.Split("\r\n", 2, StringSplitOptions.None)[0];
+        var parts = firstLine.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+        if (parts.Length < 2) return;
+
+        var connect = parts[0].Equals("CONNECT", StringComparison.OrdinalIgnoreCase);
+        string host;
+        int port;
+        if (connect)
         {
-            var buffer = new byte[16384];
-            int read = await stream.ReadAsync(buffer, ct);
-            if (read <= 0) return;
-
-            var header = Encoding.ASCII.GetString(buffer, 0, read);
-            var first = header.Split("\r\n", StringSplitOptions.RemoveEmptyEntries).FirstOrDefault() ?? "";
-            var parts = first.Split(' ', StringSplitOptions.RemoveEmptyEntries);
-            if (parts.Length < 2) return;
-
-            var connect = parts[0].Equals("CONNECT", StringComparison.OrdinalIgnoreCase);
-            string host;
-            Uri? requestUri = null;
-
-            if (connect) host = parts[1].Split(':')[0];
-            else
-            {
-                try { requestUri = new Uri(parts[1], UriKind.Absolute); host = requestUri.Host; }
-                catch { return; }
-            }
-
-            if (_isBlocked(host)) { await Deny(stream, ct); return; }
-
-            if (connect)
-            {
-                using var upstream = new TcpClient();
-                try { await upstream.ConnectAsync(host, 443, ct); } catch { return; }
-                using var upstreamStream = upstream.GetStream();
-                await stream.WriteAsync(Encoding.ASCII.GetBytes("HTTP/1.1 200 Connection Established\r\n\r\n"), ct);
-                var t1 = stream.CopyToAsync(upstreamStream, ct);
-                var t2 = upstreamStream.CopyToAsync(stream, ct);
-                await Task.WhenAny(t1, t2);
-                return;
-            }
-
-            using var httpUpstream = new TcpClient();
-            try { await httpUpstream.ConnectAsync(host, requestUri!.Port > 0 ? requestUri.Port : 80, ct); } catch { return; }
-            using var httpStream = httpUpstream.GetStream();
-            await httpStream.WriteAsync(buffer.AsMemory(0, read), ct);
-
-            using var ms = new MemoryStream();
-            var temp = new byte[8192];
-            while (ms.Length < 32768)
-            {
-                var n = await httpStream.ReadAsync(temp, ct);
-                if (n <= 0) break;
-                ms.Write(temp, 0, n);
-                var current = Encoding.ASCII.GetString(ms.GetBuffer(), 0, (int)ms.Length);
-                if (current.Contains("\r\n\r\n", StringComparison.Ordinal)) break;
-            }
-
-            var responseBytes = ms.ToArray();
-            var location = GetHeader(Encoding.ASCII.GetString(responseBytes), "Location");
-            if (!string.IsNullOrWhiteSpace(location))
-            {
-                try
-                {
-                    var target = new Uri(requestUri!, location);
-                    if (_isBlocked(target.Host)) { await Deny(stream, ct); return; }
-                }
-                catch { }
-            }
-
-            await stream.WriteAsync(responseBytes, ct);
-            var t3 = httpStream.CopyToAsync(stream, ct);
-            var t4 = stream.CopyToAsync(httpStream, ct);
-            await Task.WhenAny(t3, t4);
+            if (!TryParseHostPort(parts[1], 443, out host, out port)) return;
         }
+        else
+        {
+            if (!Uri.TryCreate(parts[1], UriKind.Absolute, out var requestUri)) return;
+            host = requestUri.Host;
+            port = requestUri.Port > 0 ? requestUri.Port : 80;
+        }
+
+        if (string.IsNullOrWhiteSpace(host) || _isBlocked(host))
+        {
+            await Deny(stream, ct);
+            return;
+        }
+
+        using var upstream = new TcpClient();
+        try { await upstream.ConnectAsync(host, port, ct); }
+        catch { return; }
+        using var upstreamStream = upstream.GetStream();
+
+        if (connect)
+        {
+            await stream.WriteAsync(Encoding.ASCII.GetBytes("HTTP/1.1 200 Connection Established\r\n\r\n"), ct);
+        }
+        else
+        {
+            await upstreamStream.WriteAsync(request.Value.Bytes, ct);
+        }
+
+        var downstream = stream.CopyToAsync(upstreamStream, ct);
+        var upstreamCopy = upstreamStream.CopyToAsync(stream, ct);
+        await Task.WhenAny(downstream, upstreamCopy);
     }
 
-    private static string? GetHeader(string headers, string name)
+    private static async Task<(byte[] Bytes, string HeaderText)?> ReadHeadersAsync(NetworkStream stream, CancellationToken ct)
     {
-        foreach (var line in headers.Split("\r\n", StringSplitOptions.RemoveEmptyEntries))
+        using var ms = new MemoryStream();
+        var buffer = new byte[8192];
+        while (ms.Length < MaxHeaderBytes)
         {
-            var colon = line.IndexOf(':');
-            if (colon <= 0) continue;
-            if (line[..colon].Equals(name, StringComparison.OrdinalIgnoreCase)) return line[(colon + 1)..].Trim();
+            var read = await stream.ReadAsync(buffer, ct);
+            if (read <= 0) return null;
+            ms.Write(buffer, 0, read);
+            var data = ms.ToArray();
+            var headerEnd = FindHeaderEnd(data);
+            if (headerEnd < 0) continue;
+            return (data, Encoding.ASCII.GetString(data, 0, headerEnd));
         }
         return null;
+    }
+
+    private static int FindHeaderEnd(byte[] data)
+    {
+        for (var i = 3; i < data.Length; i++)
+            if (data[i - 3] == '\r' && data[i - 2] == '\n' && data[i - 1] == '\r' && data[i] == '\n')
+                return i + 1;
+        return -1;
+    }
+
+    private static bool TryParseHostPort(string value, int defaultPort, out string host, out int port)
+    {
+        host = "";
+        port = defaultPort;
+        try
+        {
+            if (value.StartsWith("[", StringComparison.Ordinal))
+            {
+                var end = value.IndexOf(']');
+                if (end < 0) return false;
+                host = value[1..end];
+                if (end + 1 < value.Length && value[end + 1] == ':' && !int.TryParse(value[(end + 2)..], out port)) return false;
+            }
+            else
+            {
+                var colon = value.LastIndexOf(':');
+                if (colon > 0 && int.TryParse(value[(colon + 1)..], out var parsed))
+                {
+                    host = value[..colon];
+                    port = parsed;
+                }
+                else host = value;
+            }
+            return !string.IsNullOrWhiteSpace(host) && port is > 0 and <= 65535;
+        }
+        catch { return false; }
     }
 
     private static async Task Deny(NetworkStream stream, CancellationToken ct)
@@ -129,5 +150,6 @@ public sealed class BlockProxy : IDisposable
         _cts?.Cancel();
         try { _listener.Stop(); } catch { }
         _cts?.Dispose();
+        _cts = null;
     }
 }
