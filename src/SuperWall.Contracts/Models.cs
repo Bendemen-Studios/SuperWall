@@ -27,12 +27,6 @@ public sealed class SuperWallPolicy
     [JsonPropertyName("downloadsBlocked")]
     public bool DownloadsBlocked { get; set; } = true;
 
-    [JsonPropertyName("downloadPinHash")]
-    public string DownloadPinHash { get; set; } = "";
-
-    [JsonPropertyName("downloadPinSalt")]
-    public string DownloadPinSalt { get; set; } = "";
-
     [JsonPropertyName("dashboardUrl")]
     public string DashboardUrl { get; set; } = "https://superwall.hvmc.nl";
 
