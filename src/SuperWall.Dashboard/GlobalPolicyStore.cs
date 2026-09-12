@@ -34,7 +34,6 @@ public static class GlobalPolicyStore
             var policy = JsonSerializer.Deserialize<SuperWallPolicy>(json) ?? CreateDefault();
             policy.BlockedDomains ??= new List<string>();
             policy.BlockedDomains = NormalizeDomains(policy.BlockedDomains);
-            // These are defaults only. Enforcement is controlled per device.
             policy.UrlBlockingEnabled = true;
             policy.DownloadsBlocked = true;
             return policy;
@@ -50,8 +49,6 @@ public static class GlobalPolicyStore
         policy ??= CreateDefault();
         policy.Version = Math.Max(1, policy.Version);
         policy.BlockedDomains = NormalizeDomains(policy.BlockedDomains ?? new List<string>());
-        // URL/download switches are intentionally always-on defaults here.
-        // The actual switches are stored and enforced per device.
         policy.UrlBlockingEnabled = true;
         policy.DownloadsBlocked = true;
 
@@ -75,8 +72,6 @@ public static class GlobalPolicyStore
         }
     }
 
-    // Global policy supplies shared defaults and mandatory domains.
-    // URL blocking and download blocking are controlled independently per device.
     public static SuperWallPolicy Apply(SuperWallPolicy global, SuperWallPolicy device)
     {
         global.BlockedDomains ??= new List<string>();
@@ -95,8 +90,6 @@ public static class GlobalPolicyStore
         effective.LockBrowserInstallation = global.LockBrowserInstallation;
         effective.BlockPortableBrowsers = global.BlockPortableBrowsers;
         if (!string.IsNullOrWhiteSpace(global.DashboardUrl)) effective.DashboardUrl = global.DashboardUrl;
-        if (!string.IsNullOrWhiteSpace(global.DownloadPinHash)) effective.DownloadPinHash = global.DownloadPinHash;
-        if (!string.IsNullOrWhiteSpace(global.DownloadPinSalt)) effective.DownloadPinSalt = global.DownloadPinSalt;
         return effective;
     }
 
