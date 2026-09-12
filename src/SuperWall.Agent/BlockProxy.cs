@@ -39,52 +39,54 @@ public sealed class BlockProxy : IDisposable
     private async Task Handle(TcpClient client, CancellationToken ct)
     {
         using (client)
-        using var stream = client.GetStream();
-
-        var request = await ReadHeadersAsync(stream, ct);
-        if (request is null) return;
-
-        var firstLine = request.Value.HeaderText.Split("\r\n", 2, StringSplitOptions.None)[0];
-        var parts = firstLine.Split(' ', StringSplitOptions.RemoveEmptyEntries);
-        if (parts.Length < 2) return;
-
-        var connect = parts[0].Equals("CONNECT", StringComparison.OrdinalIgnoreCase);
-        string host;
-        int port;
-        if (connect)
         {
-            if (!TryParseHostPort(parts[1], 443, out host, out port)) return;
-        }
-        else
-        {
-            if (!Uri.TryCreate(parts[1], UriKind.Absolute, out var requestUri)) return;
-            host = requestUri.Host;
-            port = requestUri.Port > 0 ? requestUri.Port : 80;
-        }
+            using var stream = client.GetStream();
 
-        if (string.IsNullOrWhiteSpace(host) || _isBlocked(host))
-        {
-            await Deny(stream, ct);
-            return;
-        }
+            var request = await ReadHeadersAsync(stream, ct);
+            if (request is null) return;
 
-        using var upstream = new TcpClient();
-        try { await upstream.ConnectAsync(host, port, ct); }
-        catch { return; }
-        using var upstreamStream = upstream.GetStream();
+            var firstLine = request.Value.HeaderText.Split("\r\n", 2, StringSplitOptions.None)[0];
+            var parts = firstLine.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+            if (parts.Length < 2) return;
 
-        if (connect)
-        {
-            await stream.WriteAsync(Encoding.ASCII.GetBytes("HTTP/1.1 200 Connection Established\r\n\r\n"), ct);
-        }
-        else
-        {
-            await upstreamStream.WriteAsync(request.Value.Bytes, ct);
-        }
+            var connect = parts[0].Equals("CONNECT", StringComparison.OrdinalIgnoreCase);
+            string host;
+            int port;
+            if (connect)
+            {
+                if (!TryParseHostPort(parts[1], 443, out host, out port)) return;
+            }
+            else
+            {
+                if (!Uri.TryCreate(parts[1], UriKind.Absolute, out var requestUri)) return;
+                host = requestUri.Host;
+                port = requestUri.Port > 0 ? requestUri.Port : 80;
+            }
 
-        var downstream = stream.CopyToAsync(upstreamStream, ct);
-        var upstreamCopy = upstreamStream.CopyToAsync(stream, ct);
-        await Task.WhenAny(downstream, upstreamCopy);
+            if (string.IsNullOrWhiteSpace(host) || _isBlocked(host))
+            {
+                await Deny(stream, ct);
+                return;
+            }
+
+            using var upstream = new TcpClient();
+            try { await upstream.ConnectAsync(host, port, ct); }
+            catch { return; }
+            using var upstreamStream = upstream.GetStream();
+
+            if (connect)
+            {
+                await stream.WriteAsync(Encoding.ASCII.GetBytes("HTTP/1.1 200 Connection Established\r\n\r\n"), ct);
+            }
+            else
+            {
+                await upstreamStream.WriteAsync(request.Value.Bytes, ct);
+            }
+
+            var downstream = stream.CopyToAsync(upstreamStream, ct);
+            var upstreamCopy = upstreamStream.CopyToAsync(stream, ct);
+            await Task.WhenAny(downstream, upstreamCopy);
+        }
     }
 
     private static async Task<(byte[] Bytes, string HeaderText)?> ReadHeadersAsync(NetworkStream stream, CancellationToken ct)
