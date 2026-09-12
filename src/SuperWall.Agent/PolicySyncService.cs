@@ -21,7 +21,7 @@ public sealed class PolicySyncService : BackgroundService
     private readonly SearchHistoryCollector _history = new();
     private BlockProxy? _proxy;
     private LocalControlServer? _local;
-    private readonly PortableBrowserGuard _portableBrowsers = new();
+    private PortableBrowserGuard? _portableBrowsers;
     private AutoUpdater? _updater;
     private long _lastAppliedPolicyVersion = -1;
 
@@ -57,12 +57,31 @@ public sealed class PolicySyncService : BackgroundService
 
     private void StartLocalServices()
     {
+        if (_revoked) return;
+
         if (_local is null)
         {
             _local = new LocalControlServer(() => _policy, ApplyPolicy);
             _local.Start();
         }
-        _portableBrowsers.Start();
+
+        ApplyPortableBrowserPolicy();
+    }
+
+    private void ApplyPortableBrowserPolicy()
+    {
+        if (_revoked || !_policy.BlockPortableBrowsers)
+        {
+            _portableBrowsers?.Dispose();
+            _portableBrowsers = null;
+            return;
+        }
+
+        if (_portableBrowsers is null)
+        {
+            _portableBrowsers = new PortableBrowserGuard();
+            _portableBrowsers.Start();
+        }
     }
 
     private void LoadCached()
@@ -80,10 +99,21 @@ public sealed class PolicySyncService : BackgroundService
     private string LoadOrCreateDeviceId()
     {
         var file = Path.Combine(_stateDir, "device.id");
-        if (File.Exists(file)) return File.ReadAllText(file).Trim();
-        var id = $"SW-{Convert.ToHexString(RandomNumberGenerator.GetBytes(8))}";
-        File.WriteAllText(file, id);
-        return id;
+        try
+        {
+            if (File.Exists(file))
+            {
+                var existing = File.ReadAllText(file).Trim();
+                if (!string.IsNullOrWhiteSpace(existing)) return existing;
+            }
+            var id = $"SW-{Convert.ToHexString(RandomNumberGenerator.GetBytes(8))}";
+            File.WriteAllText(file, id);
+            return id;
+        }
+        catch
+        {
+            return $"SW-{Convert.ToHexString(RandomNumberGenerator.GetBytes(8))}";
+        }
     }
 
     private string? LoadEnrollmentKey()
@@ -117,7 +147,7 @@ public sealed class PolicySyncService : BackgroundService
 
             using var request = new HttpRequestMessage(HttpMethod.Get, $"{_dashboard.TrimEnd('/')}/api/agent/{Uri.EscapeDataString(_deviceId)}");
             request.Headers.Add("X-SuperWall-Agent", _agentToken);
-            var response = await _http.SendAsync(request, ct);
+            using var response = await _http.SendAsync(request, ct);
 
             if (response.StatusCode == System.Net.HttpStatusCode.Unauthorized)
             {
@@ -137,6 +167,7 @@ public sealed class PolicySyncService : BackgroundService
                 await UploadHistory(command.Id, ct);
             }
         }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }
         catch { }
     }
 
@@ -158,7 +189,8 @@ public sealed class PolicySyncService : BackgroundService
         DownloadGuard.SetEnabled(false, _policy);
         _local?.Dispose();
         _local = null;
-        _portableBrowsers.Dispose();
+        _portableBrowsers?.Dispose();
+        _portableBrowsers = null;
     }
 
     private async Task Enroll(CancellationToken ct)
@@ -168,7 +200,7 @@ public sealed class PolicySyncService : BackgroundService
         using var request = new HttpRequestMessage(HttpMethod.Post, $"{_dashboard.TrimEnd('/')}/api/enroll/{Uri.EscapeDataString(_deviceId)}");
         request.Headers.Add("X-SuperWall-Enrollment", enrollmentKey);
         request.Content = JsonContent.Create(new { computerName = Environment.MachineName, osVersion = Environment.OSVersion.VersionString });
-        var response = await _http.SendAsync(request, ct);
+        using var response = await _http.SendAsync(request, ct);
         if (!response.IsSuccessStatusCode) return;
         var result = await response.Content.ReadFromJsonAsync<EnrollResponse>(cancellationToken: ct);
         if (result is null || string.IsNullOrWhiteSpace(result.AgentToken)) return;
@@ -196,6 +228,8 @@ public sealed class PolicySyncService : BackgroundService
 
     private void ApplyPolicy()
     {
+        if (_revoked) return;
+
         var policyChanged = _lastAppliedPolicyVersion != _policy.Version;
         BrowserPolicy.Apply(_policy);
 
@@ -215,6 +249,7 @@ public sealed class PolicySyncService : BackgroundService
         }
 
         DownloadGuard.SetEnabled(_policy.DownloadsBlocked, _policy);
+        ApplyPortableBrowserPolicy();
         _lastAppliedPolicyVersion = _policy.Version;
 
         if (policyChanged) RestartManagedBrowsers();
@@ -251,11 +286,16 @@ public sealed class PolicySyncService : BackgroundService
         var upload = new HistoryUpload { DeviceId = _deviceId, RequestId = requestId, Records = records };
         using var request = new HttpRequestMessage(HttpMethod.Post, $"{_dashboard.TrimEnd('/')}/api/agent/{Uri.EscapeDataString(_deviceId)}/history") { Content = JsonContent.Create(upload) };
         request.Headers.Add("X-SuperWall-Agent", _agentToken);
-        await _http.SendAsync(request, ct);
+        using var response = await _http.SendAsync(request, ct);
+        if (!response.IsSuccessStatusCode) return;
     }
 
     public override void Dispose()
     {
-        _proxy?.Dispose(); _local?.Dispose(); _portableBrowsers.Dispose(); _http.Dispose(); base.Dispose();
+        _proxy?.Dispose();
+        _local?.Dispose();
+        _portableBrowsers?.Dispose();
+        _http.Dispose();
+        base.Dispose();
     }
 }
