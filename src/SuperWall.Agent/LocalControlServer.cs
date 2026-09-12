@@ -107,7 +107,8 @@ public sealed class LocalControlServer : IDisposable
 
     private async Task WriteHtml(HttpListenerContext ctx)
     {
-        var html = """<!doctype html>
+        var html = """
+<!doctype html>
 <html lang="nl"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>SuperWall - Downloads</title>
 <style>body{font-family:system-ui,sans-serif;max-width:560px;margin:60px auto;padding:24px;background:#f5f5f5;color:#111}main{background:#fff;border-radius:16px;padding:28px;box-shadow:0 8px 30px #0001}button{border:0;border-radius:10px;padding:12px 18px;font-weight:700;cursor:pointer;margin-right:8px}#unlock{background:#111;color:#fff}#lock{background:#ddd}#status{margin:18px 0;font-weight:600}.hint{color:#666;font-size:14px}</style></head>
 <body><main><h1>SuperWall</h1><h2>Downloads</h2><div id="status">Status wordt geladen…</div><button id="unlock">Download één keer toestaan</button><button id="lock">Direct weer blokkeren</button><p class="hint">Alleen een Windows-administrator kan dit wijzigen. De toestemming verloopt automatisch na 15 minuten.</p></main>
@@ -117,7 +118,8 @@ async function status(){try{const r=await fetch('/status',{cache:'no-store'});co
 document.getElementById('unlock').onclick=async()=>{const r=await fetch('/downloads/unlock',{method:'POST'});const x=await r.json();if(!r.ok)alert(x.error||'Toestaan mislukt');await status();};
 document.getElementById('lock').onclick=async()=>{const r=await fetch('/downloads/lock',{method:'POST'});const x=await r.json();if(!r.ok)alert(x.error||'Blokkeren mislukt');await status();};
 status();setInterval(status,5000);
-</script></body></html>""";
+</script></body></html>
+""";
         var bytes = Encoding.UTF8.GetBytes(html);
         ctx.Response.ContentType = "text/html; charset=utf-8";
         ctx.Response.StatusCode = 200;
