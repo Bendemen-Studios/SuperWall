@@ -7,7 +7,7 @@ namespace SuperWall.Agent;
 
 public sealed class AutoUpdater
 {
-    private const string LatestReleaseUrl = "https://api.github.com/repos/Bendemen-Studios/SuperWall/releases/latest";
+    private const string ReleasesUrl = "https://api.github.com/repos/Bendemen-Studios/SuperWall/releases?per_page=20";
     private const string InstallerPrefix = "SuperWall-Kids-Setup-";
     private readonly HttpClient _http = new() { Timeout = TimeSpan.FromMinutes(5) };
     private readonly string _stateDir;
@@ -16,26 +16,41 @@ public sealed class AutoUpdater
 
     public async Task CheckAndInstallAsync(CancellationToken ct)
     {
+        string? tempInstaller = null;
         try
         {
-            using var request = new HttpRequestMessage(HttpMethod.Get, LatestReleaseUrl);
-            request.Headers.UserAgent.ParseAdd("SuperWall-Kids-Updater/1.0");
+            using var request = new HttpRequestMessage(HttpMethod.Get, ReleasesUrl);
+            request.Headers.UserAgent.ParseAdd("SuperWall-Kids-Updater/1.1");
             request.Headers.Accept.ParseAdd("application/vnd.github+json");
             using var response = await _http.SendAsync(request, ct);
             if (!response.IsSuccessStatusCode) return;
 
             using var doc = JsonDocument.Parse(await response.Content.ReadAsStreamAsync(ct));
-            var root = doc.RootElement;
-            var tag = root.GetProperty("tag_name").GetString() ?? "";
-            if (!TryGetVersion(tag, out var latest)) return;
+            JsonElement? selectedRelease = null;
+            Version? latest = null;
+
+            foreach (var release in doc.RootElement.EnumerateArray())
+            {
+                if (release.TryGetProperty("draft", out var draft) && draft.GetBoolean()) continue;
+                if (release.TryGetProperty("prerelease", out var prerelease) && prerelease.GetBoolean()) continue;
+
+                var tag = release.TryGetProperty("tag_name", out var tagElement) ? tagElement.GetString() ?? "" : "";
+                if (!TryGetVersion(tag, out var candidate)) continue;
+                if (latest is null || candidate > latest)
+                {
+                    latest = candidate;
+                    selectedRelease = release;
+                }
+            }
+
+            if (selectedRelease is null || latest is null) return;
 
             var current = GetCurrentVersion();
             if (latest <= current) return;
 
-            var assets = root.GetProperty("assets");
             JsonElement? installer = null;
             JsonElement? checksum = null;
-            foreach (var asset in assets.EnumerateArray())
+            foreach (var asset in selectedRelease.Value.GetProperty("assets").EnumerateArray())
             {
                 var name = asset.GetProperty("name").GetString() ?? "";
                 if (name.StartsWith(InstallerPrefix, StringComparison.OrdinalIgnoreCase) && name.EndsWith(".exe", StringComparison.OrdinalIgnoreCase)) installer = asset;
@@ -44,14 +59,29 @@ public sealed class AutoUpdater
             if (installer is null) return;
 
             Directory.CreateDirectory(_stateDir);
-            var tempInstaller = Path.Combine(_stateDir, $"SuperWall-Kids-Setup-{latest}.exe");
-            await DownloadAsync(installer.Value.GetProperty("browser_download_url").GetString()!, tempInstaller, ct);
+            var finalInstaller = Path.Combine(_stateDir, $"SuperWall-Kids-Setup-{latest}.exe");
+            tempInstaller = finalInstaller + ".download";
+            TryDelete(tempInstaller);
+            TryDelete(finalInstaller);
+
+            var downloadUrl = installer.Value.GetProperty("browser_download_url").GetString();
+            if (string.IsNullOrWhiteSpace(downloadUrl)) return;
+            await DownloadAsync(downloadUrl, tempInstaller, ct);
+
+            if (!IsWindowsExecutable(tempInstaller))
+            {
+                TryDelete(tempInstaller);
+                return;
+            }
 
             if (checksum is not null)
             {
-                var expected = await DownloadTextAsync(checksum.Value.GetProperty("browser_download_url").GetString()!, ct);
+                var checksumUrl = checksum.Value.GetProperty("browser_download_url").GetString();
+                if (string.IsNullOrWhiteSpace(checksumUrl)) { TryDelete(tempInstaller); return; }
+                var expected = await DownloadTextAsync(checksumUrl, ct);
                 var expectedHash = expected.Split(new[] { ' ', '\t', '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries).FirstOrDefault();
-                var actualHash = Convert.ToHexString(await SHA256.HashDataAsync(File.OpenRead(tempInstaller), ct));
+                await using var hashStream = File.OpenRead(tempInstaller);
+                var actualHash = Convert.ToHexString(await SHA256.HashDataAsync(hashStream, ct));
                 if (string.IsNullOrWhiteSpace(expectedHash) || !actualHash.Equals(expectedHash, StringComparison.OrdinalIgnoreCase))
                 {
                     TryDelete(tempInstaller);
@@ -59,18 +89,22 @@ public sealed class AutoUpdater
                 }
             }
 
+            File.Move(tempInstaller, finalInstaller, true);
+            tempInstaller = null;
+
             var psi = new ProcessStartInfo
             {
-                FileName = tempInstaller,
-                // Let the bootstrapper start the real Inno installer without pre-elevating it.
-                // This allows the bootstrapper to provide a writable TEMP/TMP location first.
+                FileName = finalInstaller,
                 Arguments = "/UPGRADE=1 /VERYSILENT /SUPPRESSMSGBOXES /NORESTART",
                 UseShellExecute = false,
-                WorkingDirectory = Path.GetDirectoryName(tempInstaller) ?? _stateDir
+                WorkingDirectory = _stateDir
             };
             Process.Start(psi);
         }
-        catch { }
+        catch
+        {
+            if (!string.IsNullOrWhiteSpace(tempInstaller)) TryDelete(tempInstaller);
+        }
     }
 
     private Version GetCurrentVersion()
@@ -85,25 +119,36 @@ public sealed class AutoUpdater
     private static bool TryGetVersion(string tag, out Version version)
     {
         version = new Version(0, 0, 0);
-        var value = tag.StartsWith("kids-v", StringComparison.OrdinalIgnoreCase) ? tag[6..] : tag.TrimStart('v', 'V');
-        return Version.TryParse(value, out version);
+        if (!tag.StartsWith("kids-v", StringComparison.OrdinalIgnoreCase)) return false;
+        return Version.TryParse(tag[6..], out version);
+    }
+
+    private static bool IsWindowsExecutable(string path)
+    {
+        try
+        {
+            using var stream = File.OpenRead(path);
+            if (stream.Length < 2) return false;
+            return stream.ReadByte() == 'M' && stream.ReadByte() == 'Z';
+        }
+        catch { return false; }
     }
 
     private async Task DownloadAsync(string url, string path, CancellationToken ct)
     {
         using var request = new HttpRequestMessage(HttpMethod.Get, url);
-        request.Headers.UserAgent.ParseAdd("SuperWall-Kids-Updater/1.0");
+        request.Headers.UserAgent.ParseAdd("SuperWall-Kids-Updater/1.1");
         using var response = await _http.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, ct);
         response.EnsureSuccessStatusCode();
         await using var input = await response.Content.ReadAsStreamAsync(ct);
-        await using var output = File.Create(path);
+        await using var output = new FileStream(path, FileMode.CreateNew, FileAccess.Write, FileShare.None);
         await input.CopyToAsync(output, ct);
     }
 
     private async Task<string> DownloadTextAsync(string url, CancellationToken ct)
     {
         using var request = new HttpRequestMessage(HttpMethod.Get, url);
-        request.Headers.UserAgent.ParseAdd("SuperWall-Kids-Updater/1.0");
+        request.Headers.UserAgent.ParseAdd("SuperWall-Kids-Updater/1.1");
         using var response = await _http.SendAsync(request, ct);
         response.EnsureSuccessStatusCode();
         return await response.Content.ReadAsStringAsync(ct);
