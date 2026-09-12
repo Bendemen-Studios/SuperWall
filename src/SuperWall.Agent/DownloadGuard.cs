@@ -11,12 +11,14 @@ public static class DownloadGuard
     private static Timer? _timer;
     private static FileSystemWatcher? _watcher;
     private static bool _enabled;
+    private static DateTimeOffset _unlockUntilUtc;
 
     public static void SetEnabled(bool enabled, SuperWallPolicy policy)
     {
         lock (Gate)
         {
             _enabled = enabled;
+            _unlockUntilUtc = DateTimeOffset.MinValue;
             _timer?.Dispose();
             _timer = null;
             _watcher?.Dispose();
@@ -59,15 +61,34 @@ public static class DownloadGuard
         lock (Gate) return _enabled;
     }
 
+    public static bool IsTemporarilyUnlocked()
+    {
+        lock (Gate) return _enabled && _unlockUntilUtc > DateTimeOffset.UtcNow;
+    }
+
+    public static bool GrantTemporaryUnlock(TimeSpan duration)
+    {
+        if (duration <= TimeSpan.Zero || duration > TimeSpan.FromHours(2)) return false;
+        lock (Gate)
+        {
+            if (!_enabled) return false;
+            _unlockUntilUtc = DateTimeOffset.UtcNow.Add(duration);
+            return true;
+        }
+    }
+
+    public static void RevokeTemporaryUnlock()
+    {
+        lock (Gate) _unlockUntilUtc = DateTimeOffset.MinValue;
+    }
+
     private static void Sweep()
     {
-        if (!IsEnabled()) return;
-
+        if (!IsEnabled() || IsTemporarilyUnlocked()) return;
         try
         {
             var downloads = FindTargetDownloadDirectory();
             if (string.IsNullOrWhiteSpace(downloads)) return;
-
             foreach (var file in Directory.EnumerateFiles(downloads, "*", SearchOption.AllDirectories))
                 QuarantineWhenReady(file);
         }
@@ -76,11 +97,10 @@ public static class DownloadGuard
 
     private static void QuarantineWhenReady(string path)
     {
-        if (!IsEnabled() || !IsLikelyDownload(path)) return;
-
+        if (!IsEnabled() || IsTemporarilyUnlocked() || !IsLikelyDownload(path)) return;
         _ = Task.Run(async () =>
         {
-            for (var attempt = 0; attempt < 8 && IsEnabled(); attempt++)
+            for (var attempt = 0; attempt < 8 && IsEnabled() && !IsTemporarilyUnlocked(); attempt++)
             {
                 try
                 {
@@ -88,9 +108,7 @@ public static class DownloadGuard
                     var quarantine = Path.Combine(StateDir, "Quarantine");
                     Directory.CreateDirectory(quarantine);
                     var target = Path.Combine(quarantine, Path.GetFileName(path));
-                    if (File.Exists(target))
-                        target = Path.Combine(quarantine, $"{Guid.NewGuid():N}-{Path.GetFileName(path)}");
-
+                    if (File.Exists(target)) target = Path.Combine(quarantine, $"{Guid.NewGuid():N}-{Path.GetFileName(path)}");
                     File.Move(path, target);
                     return;
                 }
@@ -115,7 +133,6 @@ public static class DownloadGuard
         if (string.IsNullOrWhiteSpace(path) || !File.Exists(path)) return false;
         var name = Path.GetFileName(path);
         if (string.IsNullOrWhiteSpace(name)) return false;
-
         return !name.EndsWith(".crdownload", StringComparison.OrdinalIgnoreCase)
             && !name.EndsWith(".part", StringComparison.OrdinalIgnoreCase)
             && !name.EndsWith(".tmp", StringComparison.OrdinalIgnoreCase)
