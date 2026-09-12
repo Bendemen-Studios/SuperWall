@@ -46,6 +46,11 @@ public sealed class PolicySyncService : BackgroundService
             await SyncOnce(stoppingToken);
             SecurityHardening.Apply();
 
+            // Re-assert the cached policy even when the dashboard cannot be reached.
+            // This also recreates the local blocking proxy if it was stopped or crashed.
+            if (!_revoked)
+                ApplyPolicy();
+
             if (!_revoked && DateTimeOffset.UtcNow >= nextUpdateCheck)
             {
                 await _updater.CheckAndInstallAsync(stoppingToken);
