@@ -5,8 +5,11 @@ namespace SuperWall.Agent;
 
 public sealed class SearchHistoryCollector
 {
+    private static readonly long ChromiumEpochTicks = DateTimeOffset.UnixEpoch.UtcTicks - TimeSpan.FromSeconds(11644473600L).Ticks;
+
     public List<HistoryRecord> Collect(int retentionDays)
     {
+        if (retentionDays <= 0) return new();
         var since = DateTimeOffset.UtcNow.AddDays(-retentionDays);
         var result = new List<HistoryRecord>();
         var profile = WindowsUserScope.ProfilePath();
@@ -32,17 +35,18 @@ public sealed class SearchHistoryCollector
             con.Open();
             using var cmd = con.CreateCommand();
             cmd.CommandText = "SELECT url,title,last_visit_time FROM urls WHERE last_visit_time > $min ORDER BY last_visit_time DESC LIMIT 25000";
-            cmd.Parameters.AddWithValue("$min", (since.UtcTicks - DateTimeOffset.UnixEpoch.UtcTicks) / 10);
+            cmd.Parameters.AddWithValue("$min", (since.UtcTicks - ChromiumEpochTicks) / 10);
             using var r = cmd.ExecuteReader();
             while (r.Read())
             {
                 var micros = r.GetInt64(2);
+                if (micros <= 0) continue;
                 records.Add(new HistoryRecord
                 {
                     Browser = browser,
                     Url = r.GetString(0),
                     Title = r.IsDBNull(1) ? "" : r.GetString(1),
-                    VisitedUtc = DateTimeOffset.UnixEpoch.AddTicks(micros * 10)
+                    VisitedUtc = new DateTimeOffset(ChromiumEpochTicks + micros * 10, TimeSpan.Zero)
                 });
             }
             return records;
@@ -71,6 +75,7 @@ public sealed class SearchHistoryCollector
                 while (r.Read())
                 {
                     var micros = r.GetInt64(2);
+                    if (micros <= 0) continue;
                     records.Add(new HistoryRecord
                     {
                         Browser = "Firefox",
@@ -89,17 +94,35 @@ public sealed class SearchHistoryCollector
     private static string? CopyDatabase(string source)
     {
         if (!File.Exists(source)) return null;
+        string? directory = null;
         try
         {
-            var target = Path.Combine(Path.GetTempPath(), $"superwall-{Guid.NewGuid():N}.db");
+            directory = Path.Combine(Path.GetTempPath(), $"superwall-{Guid.NewGuid():N}");
+            Directory.CreateDirectory(directory);
+            var target = Path.Combine(directory, Path.GetFileName(source));
             File.Copy(source, target, true);
+
+            foreach (var suffix in new[] { "-wal", "-shm" })
+            {
+                var sidecar = source + suffix;
+                if (File.Exists(sidecar)) File.Copy(sidecar, target + suffix, true);
+            }
             return target;
         }
-        catch { return null; }
+        catch
+        {
+            if (!string.IsNullOrWhiteSpace(directory)) TryDelete(directory);
+            return null;
+        }
     }
 
     private static void TryDelete(string path)
     {
-        try { File.Delete(path); } catch { }
+        try
+        {
+            if (Directory.Exists(path)) Directory.Delete(path, true);
+            else File.Delete(path);
+        }
+        catch { }
     }
 }
