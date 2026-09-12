@@ -14,33 +14,52 @@ public sealed class PortableBrowserGuard : IDisposable
         "\\Downloads\\", "\\Desktop\\", "\\AppData\\Local\\Temp\\", "\\AppData\\Local\\Programs\\"
     };
 
+    private readonly object _gate = new();
     private Timer? _timer;
 
-    public void Start() => _timer = new Timer(_ => Sweep(), null, TimeSpan.FromSeconds(5), TimeSpan.FromSeconds(10));
-
-    private static void Sweep()
+    public void Start()
     {
-        foreach (var process in Process.GetProcesses())
+        lock (_gate)
         {
-            try
-            {
-                var name = Path.GetFileNameWithoutExtension(process.ProcessName);
-                if (!BrowserNames.Any(x => x.Equals(name, StringComparison.OrdinalIgnoreCase))) continue;
-                if (!WindowsUserScope.IsTargetUserProcess(process)) continue;
-
-                string? path = null;
-                try { path = process.MainModule?.FileName; } catch { }
-                if (string.IsNullOrWhiteSpace(path)) continue;
-
-                if (UserWritableMarkers.Any(m => path.Contains(m, StringComparison.OrdinalIgnoreCase)))
-                {
-                    try { process.Kill(entireProcessTree: true); } catch { }
-                }
-            }
-            catch { }
-            finally { process.Dispose(); }
+            _timer?.Dispose();
+            _timer = new Timer(_ => Sweep(), null, TimeSpan.FromSeconds(5), TimeSpan.FromSeconds(10));
         }
     }
 
-    public void Dispose() => _timer?.Dispose();
+    private static void Sweep()
+    {
+        try
+        {
+            foreach (var process in Process.GetProcesses())
+            {
+                try
+                {
+                    var name = Path.GetFileNameWithoutExtension(process.ProcessName);
+                    if (!BrowserNames.Any(x => x.Equals(name, StringComparison.OrdinalIgnoreCase))) continue;
+                    if (!WindowsUserScope.IsTargetUserProcess(process)) continue;
+
+                    string? path = null;
+                    try { path = process.MainModule?.FileName; } catch { }
+                    if (string.IsNullOrWhiteSpace(path)) continue;
+
+                    if (UserWritableMarkers.Any(m => path.Contains(m, StringComparison.OrdinalIgnoreCase)))
+                    {
+                        try { process.Kill(entireProcessTree: true); } catch { }
+                    }
+                }
+                catch { }
+                finally { process.Dispose(); }
+            }
+        }
+        catch { }
+    }
+
+    public void Dispose()
+    {
+        lock (_gate)
+        {
+            _timer?.Dispose();
+            _timer = null;
+        }
+    }
 }
