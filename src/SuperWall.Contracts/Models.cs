@@ -35,6 +35,15 @@ public sealed class SuperWallPolicy
 
     [JsonPropertyName("blockPortableBrowsers")]
     public bool BlockPortableBrowsers { get; set; } = true;
+
+    // Legacy compatibility only. These values are never serialized or used for approval.
+    [JsonIgnore]
+    [Obsolete("Download approval now uses local Windows administrator authentication.")]
+    public string? DownloadPinHash { get; set; }
+
+    [JsonIgnore]
+    [Obsolete("Download approval now uses local Windows administrator authentication.")]
+    public string? DownloadPinSalt { get; set; }
 }
 
 public sealed class DeviceInfo
