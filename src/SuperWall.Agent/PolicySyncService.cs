@@ -34,10 +34,8 @@ public sealed class PolicySyncService : BackgroundService
 
         await SyncOnce(stoppingToken);
         if (!_revoked) ApplyPolicy();
+        StartLocalServices();
 
-        _local = new LocalControlServer(() => _policy);
-        _local.Start();
-        _portableBrowsers.Start();
         _updater = new AutoUpdater(_stateDir);
         var nextUpdateCheck = DateTimeOffset.UtcNow;
 
@@ -57,6 +55,16 @@ public sealed class PolicySyncService : BackgroundService
         }
     }
 
+    private void StartLocalServices()
+    {
+        if (_local is null)
+        {
+            _local = new LocalControlServer(() => _policy, ApplyPolicy);
+            _local.Start();
+        }
+        _portableBrowsers.Start();
+    }
+
     private void LoadCached()
     {
         var file = Path.Combine(_stateDir, "policy.json");
@@ -67,16 +75,6 @@ public sealed class PolicySyncService : BackgroundService
         _dashboard = string.IsNullOrWhiteSpace(configured) ? (Environment.GetEnvironmentVariable("SUPERWALL_DASHBOARD") ?? _policy.DashboardUrl) : configured;
         _agentToken = LocalSecrets.Load("agent-token") ?? "";
         _deviceId = LoadOrCreateDeviceId();
-        EnsureDefaultPin();
-    }
-
-    private void EnsureDefaultPin()
-    {
-        if (!string.IsNullOrWhiteSpace(_policy.DownloadPinHash) && !string.IsNullOrWhiteSpace(_policy.DownloadPinSalt)) return;
-        var (hash, salt) = PinSecurity.CreateHash("2003");
-        _policy.DownloadPinHash = hash;
-        _policy.DownloadPinSalt = salt;
-        SavePolicy();
     }
 
     private string LoadOrCreateDeviceId()
@@ -108,7 +106,6 @@ public sealed class PolicySyncService : BackgroundService
             if (_revoked)
             {
                 if (!HasEnrollmentKey()) return;
-                _revoked = false;
                 _agentToken = "";
             }
 
@@ -132,7 +129,6 @@ public sealed class PolicySyncService : BackgroundService
             var envelope = await response.Content.ReadFromJsonAsync<PolicyEnvelope>(cancellationToken: ct);
             if (envelope is null || envelope.Policy.Version < _policy.Version) return;
             _policy = envelope.Policy;
-            EnsureDefaultPin();
             SavePolicy();
             ApplyPolicy();
             foreach (var command in envelope.Commands)
@@ -179,10 +175,11 @@ public sealed class PolicySyncService : BackgroundService
         if (!LocalSecrets.Save("agent-token", result.AgentToken)) return;
         _agentToken = result.AgentToken;
         _policy = result.Policy ?? new();
-        EnsureDefaultPin();
         SavePolicy();
         ConsumeEnrollmentKey();
         _revoked = false;
+        ApplyPolicy();
+        StartLocalServices();
     }
 
     private void SavePolicy()
