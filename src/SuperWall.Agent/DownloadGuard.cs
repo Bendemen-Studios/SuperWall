@@ -7,25 +7,47 @@ public static class DownloadGuard
     private static readonly object Gate = new();
     private static readonly string StateDir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData), "SuperWall");
     private static Timer? _timer;
+    private static Timer? _unlockExpiryTimer;
     private static FileSystemWatcher? _watcher;
     private static bool _enabled;
     private static DateTimeOffset _unlockUntilUtc;
+    private static Action? _unlockStateChanged;
+
+    public static void SetUnlockStateChanged(Action callback)
+    {
+        lock (Gate) _unlockStateChanged = callback;
+    }
 
     public static void SetEnabled(bool enabled, SuperWallPolicy policy)
     {
         lock (Gate)
         {
+            var wasUnlocked = _unlockUntilUtc > DateTimeOffset.UtcNow;
             _enabled = enabled;
-            _unlockUntilUtc = DateTimeOffset.MinValue;
+            if (!enabled)
+            {
+                _unlockUntilUtc = DateTimeOffset.MinValue;
+                _unlockExpiryTimer?.Dispose(); _unlockExpiryTimer = null;
+            }
             _timer?.Dispose(); _timer = null;
             _watcher?.Dispose(); _watcher = null;
             if (!enabled) { DeleteState(); return; }
+
+            // Policy refreshes must not cancel an active administrator approval.
+            if (!wasUnlocked) _unlockUntilUtc = DateTimeOffset.MinValue;
+
             var downloads = FindTargetDownloadDirectory();
             if (!string.IsNullOrWhiteSpace(downloads))
             {
                 try
                 {
-                    _watcher = new FileSystemWatcher(downloads) { IncludeSubdirectories = true, NotifyFilter = NotifyFilters.FileName | NotifyFilters.CreationTime | NotifyFilters.LastWrite, Filter = "*.*", EnableRaisingEvents = true };
+                    _watcher = new FileSystemWatcher(downloads)
+                    {
+                        IncludeSubdirectories = true,
+                        NotifyFilter = NotifyFilters.FileName | NotifyFilters.CreationTime | NotifyFilters.LastWrite,
+                        Filter = "*.*",
+                        EnableRaisingEvents = true
+                    };
                     _watcher.Created += (_, e) => QuarantineWhenReady(e.FullPath);
                     _watcher.Renamed += (_, e) => QuarantineWhenReady(e.FullPath);
                 }
@@ -41,11 +63,38 @@ public static class DownloadGuard
 
     public static bool GrantTemporaryUnlock(TimeSpan duration)
     {
-        if (duration <= TimeSpan.Zero || duration > TimeSpan.FromHours(2)) return false;
-        lock (Gate) { if (!_enabled) return false; _unlockUntilUtc = DateTimeOffset.UtcNow.Add(duration); return true; }
+        if (duration <= TimeSpan.Zero || duration > TimeSpan.FromMinutes(15)) return false;
+        lock (Gate)
+        {
+            if (!_enabled) return false;
+            _unlockUntilUtc = DateTimeOffset.UtcNow.Add(duration);
+            _unlockExpiryTimer?.Dispose();
+            _unlockExpiryTimer = new Timer(_ => ExpireUnlock(), null, duration, Timeout.InfiniteTimeSpan);
+            return true;
+        }
     }
 
-    public static void RevokeTemporaryUnlock() { lock (Gate) _unlockUntilUtc = DateTimeOffset.MinValue; }
+    public static void RevokeTemporaryUnlock()
+    {
+        lock (Gate)
+        {
+            _unlockUntilUtc = DateTimeOffset.MinValue;
+            _unlockExpiryTimer?.Dispose(); _unlockExpiryTimer = null;
+        }
+    }
+
+    private static void ExpireUnlock()
+    {
+        Action? callback = null;
+        lock (Gate)
+        {
+            if (!_enabled || _unlockUntilUtc == DateTimeOffset.MinValue || _unlockUntilUtc > DateTimeOffset.UtcNow) return;
+            _unlockUntilUtc = DateTimeOffset.MinValue;
+            _unlockExpiryTimer?.Dispose(); _unlockExpiryTimer = null;
+            callback = _unlockStateChanged;
+        }
+        try { callback?.Invoke(); } catch { }
+    }
 
     private static void Sweep()
     {
