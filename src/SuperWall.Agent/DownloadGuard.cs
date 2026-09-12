@@ -17,7 +17,6 @@ public static class DownloadGuard
         lock (Gate)
         {
             _enabled = enabled;
-
             _timer?.Dispose();
             _timer = null;
             _watcher?.Dispose();
@@ -79,9 +78,6 @@ public static class DownloadGuard
     {
         if (!IsEnabled() || !IsLikelyDownload(path)) return;
 
-        // A browser normally creates a temporary file first and then renames it
-        // when the download completes. Retry briefly so the guard also catches
-        // files that are still locked by the browser at the first notification.
         _ = Task.Run(async () =>
         {
             for (var attempt = 0; attempt < 8 && IsEnabled(); attempt++)
@@ -116,7 +112,7 @@ public static class DownloadGuard
 
     private static bool IsLikelyDownload(string path)
     {
-        if (string.IsNullOrWhiteSpace(path)) return false;
+        if (string.IsNullOrWhiteSpace(path) || !File.Exists(path)) return false;
         var name = Path.GetFileName(path);
         if (string.IsNullOrWhiteSpace(name)) return false;
 
