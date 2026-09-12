@@ -43,6 +43,15 @@ begin
       FileExists(ExpandConstant('{commonappdata}\SuperWall\target-user.txt'));
 end;
 
+function IsAlreadyEnrolled: Boolean;
+begin
+  { A completed enrollment stores the agent token and removes enrollment.key.
+    If the token is missing, the installer must show the enrollment key page,
+    even when the agent itself is already installed. }
+  Result := FileExists(ExpandConstant('{commonappdata}\SuperWall\agent-token.bin')) and
+    not FileExists(ExpandConstant('{commonappdata}\SuperWall\enrollment.key'));
+end;
+
 function IsValidHttpsUrl(const Value: string): Boolean;
 begin
   Result := (Pos('https://', LowerCase(Trim(Value))) = 1) and (Length(Trim(Value)) > 8);
@@ -73,7 +82,10 @@ end;
 
 function ShouldSkipPage(PageID: Integer): Boolean;
 begin
-  Result := IsUpgrade and ((PageID = DashboardPage.ID) or (PageID = EnrollmentPage.ID));
+  { Only skip enrollment on a real upgrade when this machine is already enrolled.
+    An installed-but-unenrolled agent must get another chance to enter a key. }
+  Result := IsUpgrade and IsAlreadyEnrolled and
+    ((PageID = DashboardPage.ID) or (PageID = EnrollmentPage.ID));
 end;
 
 function NextButtonClick(CurPageID: Integer): Boolean;
