@@ -45,11 +45,7 @@ public sealed class PolicySyncService : BackgroundService
         {
             await SyncOnce(stoppingToken);
             SecurityHardening.Apply();
-
-            // Re-assert the cached policy even when the dashboard cannot be reached.
-            // This also recreates the local blocking proxy if it was stopped or crashed.
-            if (!_revoked)
-                ApplyPolicy();
+            if (!_revoked) ApplyPolicy();
 
             if (!_revoked && DateTimeOffset.UtcNow >= nextUpdateCheck)
             {
@@ -105,12 +101,23 @@ public sealed class PolicySyncService : BackgroundService
 
     private async Task SyncOnce(CancellationToken ct)
     {
-        if (_revoked || string.IsNullOrWhiteSpace(_dashboard)) return;
+        if (string.IsNullOrWhiteSpace(_dashboard)) return;
         if (!Uri.TryCreate(_dashboard, UriKind.Absolute, out var baseUri) || !string.Equals(baseUri.Scheme, Uri.UriSchemeHttps, StringComparison.OrdinalIgnoreCase)) return;
         try
         {
-            if (string.IsNullOrWhiteSpace(_agentToken)) await Enroll(ct);
-            if (_revoked || string.IsNullOrWhiteSpace(_agentToken)) return;
+            if (_revoked)
+            {
+                if (!HasEnrollmentKey()) return;
+                _revoked = false;
+                _agentToken = "";
+            }
+
+            if (string.IsNullOrWhiteSpace(_agentToken))
+            {
+                await Enroll(ct);
+                if (_revoked || string.IsNullOrWhiteSpace(_agentToken)) return;
+            }
+
             using var request = new HttpRequestMessage(HttpMethod.Get, $"{_dashboard.TrimEnd('/')}/api/agent/{Uri.EscapeDataString(_deviceId)}");
             request.Headers.Add("X-SuperWall-Agent", _agentToken);
             var response = await _http.SendAsync(request, ct);
@@ -137,12 +144,17 @@ public sealed class PolicySyncService : BackgroundService
         catch { }
     }
 
+    private bool HasEnrollmentKey()
+    {
+        var key = LoadEnrollmentKey();
+        return !string.IsNullOrWhiteSpace(key);
+    }
+
     private void ClearRevokedState()
     {
         _revoked = true;
         _agentToken = "";
         LocalSecrets.Delete("agent-token");
-        ConsumeEnrollmentKey();
 
         _proxy?.Dispose();
         _proxy = null;
@@ -170,6 +182,7 @@ public sealed class PolicySyncService : BackgroundService
         EnsureDefaultPin();
         SavePolicy();
         ConsumeEnrollmentKey();
+        _revoked = false;
     }
 
     private void SavePolicy()
@@ -194,15 +207,8 @@ public sealed class PolicySyncService : BackgroundService
             if (_proxy is null)
             {
                 var candidate = new BlockProxy(IsBlocked);
-                try
-                {
-                    candidate.Start();
-                    _proxy = candidate;
-                }
-                catch
-                {
-                    candidate.Dispose();
-                }
+                try { candidate.Start(); _proxy = candidate; }
+                catch { candidate.Dispose(); }
             }
         }
         else
@@ -214,8 +220,7 @@ public sealed class PolicySyncService : BackgroundService
         DownloadGuard.SetEnabled(_policy.DownloadsBlocked, _policy);
         _lastAppliedPolicyVersion = _policy.Version;
 
-        if (policyChanged)
-            RestartManagedBrowsers();
+        if (policyChanged) RestartManagedBrowsers();
     }
 
     private static void RestartManagedBrowsers()
