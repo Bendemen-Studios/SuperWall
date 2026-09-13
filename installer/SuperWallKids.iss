@@ -1,5 +1,5 @@
 #define MyAppName "SuperWall Kids"
-#define MyAppVersion "0.5.0"
+#define MyAppVersion "0.5.1"
 #define MyPublisher "Bendemen Studios"
 #define MyExeName "SuperWall.Agent.exe"
 #define ServiceSddl "D:(A;;CCLCSWRPWPDTLOCRRC;;;SY)(A;;CCDCLCSWRPWPDTLOCRSDRCWDWO;;;BA)(A;;CCLCRP;;;AU)"
@@ -45,9 +45,6 @@ end;
 
 function IsAlreadyEnrolled: Boolean;
 begin
-  { A completed enrollment stores the agent token and removes enrollment.key.
-    If the token is missing, the installer must show the enrollment key page,
-    even when the agent itself is already installed. }
   Result := FileExists(ExpandConstant('{commonappdata}\SuperWall\agent-token.bin')) and
     not FileExists(ExpandConstant('{commonappdata}\SuperWall\enrollment.key'));
 end;
@@ -82,8 +79,6 @@ end;
 
 function ShouldSkipPage(PageID: Integer): Boolean;
 begin
-  { Only skip enrollment on a real upgrade when this machine is already enrolled.
-    An installed-but-unenrolled agent must get another chance to enter a key. }
   Result := IsUpgrade and IsAlreadyEnrolled and
     ((PageID = DashboardPage.ID) or (PageID = EnrollmentPage.ID));
 end;
