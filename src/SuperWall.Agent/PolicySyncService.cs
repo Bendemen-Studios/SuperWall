@@ -22,6 +22,7 @@ public sealed class PolicySyncService : BackgroundService
     private BlockProxy? _proxy;
     private LocalControlServer? _local;
     private PortableBrowserGuard? _portableBrowsers;
+    private AppGuard? _appGuard;
     private AutoUpdater? _updater;
     private long _lastAppliedPolicyVersion = -1;
 
@@ -66,6 +67,7 @@ public sealed class PolicySyncService : BackgroundService
         }
 
         ApplyPortableBrowserPolicy();
+        ApplyAppPolicy();
     }
 
     private void ApplyPortableBrowserPolicy()
@@ -82,6 +84,19 @@ public sealed class PolicySyncService : BackgroundService
             _portableBrowsers = new PortableBrowserGuard();
             _portableBrowsers.Start();
         }
+    }
+
+    private void ApplyAppPolicy()
+    {
+        if (_revoked)
+        {
+            _appGuard?.Dispose();
+            _appGuard = null;
+            return;
+        }
+
+        _appGuard ??= new AppGuard();
+        _appGuard.Apply(_policy);
     }
 
     private void LoadCached()
@@ -191,6 +206,8 @@ public sealed class PolicySyncService : BackgroundService
         _local = null;
         _portableBrowsers?.Dispose();
         _portableBrowsers = null;
+        _appGuard?.Dispose();
+        _appGuard = null;
     }
 
     private async Task Enroll(CancellationToken ct)
@@ -237,7 +254,7 @@ public sealed class PolicySyncService : BackgroundService
         {
             if (_proxy is null)
             {
-                var candidate = new BlockProxy(IsBlocked);
+                var candidate = new BlockProxy(host => PolicyRules.IsDomainBlocked(_policy, host));
                 try { candidate.Start(); _proxy = candidate; }
                 catch { candidate.Dispose(); }
             }
@@ -250,6 +267,7 @@ public sealed class PolicySyncService : BackgroundService
 
         DownloadGuard.SetEnabled(_policy.DownloadsBlocked, _policy);
         ApplyPortableBrowserPolicy();
+        ApplyAppPolicy();
         _lastAppliedPolicyVersion = _policy.Version;
 
         if (policyChanged) RestartManagedBrowsers();
@@ -277,8 +295,6 @@ public sealed class PolicySyncService : BackgroundService
         }
     }
 
-    private bool IsBlocked(string host) => _policy.BlockedDomains.Any(d => host.Equals(d, StringComparison.OrdinalIgnoreCase) || host.EndsWith("." + d, StringComparison.OrdinalIgnoreCase));
-
     private async Task UploadHistory(string requestId, CancellationToken ct)
     {
         if (!_policy.SearchHistoryEnabled || string.IsNullOrWhiteSpace(_dashboard) || string.IsNullOrWhiteSpace(_agentToken) || string.IsNullOrWhiteSpace(requestId)) return;
@@ -295,6 +311,7 @@ public sealed class PolicySyncService : BackgroundService
         _proxy?.Dispose();
         _local?.Dispose();
         _portableBrowsers?.Dispose();
+        _appGuard?.Dispose();
         _http.Dispose();
         base.Dispose();
     }
