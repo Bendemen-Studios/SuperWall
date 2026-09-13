@@ -23,7 +23,7 @@ public sealed class PolicySyncService : BackgroundService
         while (!stoppingToken.IsCancellationRequested)
         {
             await SyncOnce(stoppingToken); SecurityHardening.Apply(); if (!_revoked) ApplyPolicy();
-            if (!_revoked && DateTimeOffset.UtcNow >= nextUpdateCheck) { await _updater.CheckAndInstallAsync(stoppingToken); nextUpdateCheck = DateTimeOffset.UtcNow.AddHours(6); }
+            if (!_revoked && DateTimeOffset.UtcNow >= nextUpdateCheck) { await _updater.CheckAndInstallAsync(stoppingToken); nextUpdateCheck = DateTimeOffset.UtcNow.AddMinutes(15); }
             await Task.Delay(TimeSpan.FromSeconds(60), stoppingToken);
         }
     }
