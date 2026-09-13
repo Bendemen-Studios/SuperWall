@@ -54,6 +54,9 @@ public sealed class SuperWallPolicy
     [JsonPropertyName("blockedApplicationPaths")]
     public List<string> BlockedApplicationPaths { get; set; } = new();
 
+    [JsonPropertyName("allowedApplicationPaths")]
+    public List<string> AllowedApplicationPaths { get; set; } = new();
+
     // Legacy compatibility only. These values are never serialized or used for approval.
     [JsonIgnore]
     [Obsolete("Download approval now uses local Windows administrator authentication.")]
