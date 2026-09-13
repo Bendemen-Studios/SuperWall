@@ -25,7 +25,8 @@ public static class ApplicationInventoryEndpoints
             using var c = new SqliteConnection($"Data Source={db}"); c.Open(); EnsureTable(c); using var tx = c.BeginTransaction();
             using (var del=c.CreateCommand()) { del.Transaction=tx; del.CommandText="DELETE FROM installed_apps WHERE device_id=$d"; del.Parameters.AddWithValue("$d",id); del.ExecuteNonQuery(); }
             using (var ins=c.CreateCommand()) { ins.Transaction=tx; ins.CommandText="INSERT INTO installed_apps(device_id,name,version,publisher,path,reported_utc) VALUES($d,$n,$v,$p,$x,$t)"; foreach(var x in upload.Applications.Take(2000)){ins.Parameters.Clear();ins.Parameters.AddWithValue("$d",id);ins.Parameters.AddWithValue("$n",Truncate(x.Name,256));ins.Parameters.AddWithValue("$v",Truncate(x.Version,80));ins.Parameters.AddWithValue("$p",Truncate(x.Publisher,256));ins.Parameters.AddWithValue("$x",Truncate(x.Path,4096));ins.Parameters.AddWithValue("$t",DateTimeOffset.UtcNow.ToString("O"));ins.ExecuteNonQuery();} }
-            tx.Commit(); return Results.Ok(new { count=upload.Applications.Count });
+            using (var clean=c.CreateCommand()) { clean.Transaction=tx; clean.CommandText="UPDATE commands SET completed=1 WHERE device_id=$d AND type='request_app_inventory' AND completed=0"; clean.Parameters.AddWithValue("$d",id); clean.ExecuteNonQuery(); }
+            tx.Commit(); return Results.Ok(new { count=Math.Min(upload.Applications.Count,2000) });
         });
     }
     private static void EnsureTable(SqliteConnection c){using var cmd=c.CreateCommand();cmd.CommandText="CREATE TABLE IF NOT EXISTS installed_apps(device_id TEXT NOT NULL,name TEXT NOT NULL,version TEXT,publisher TEXT,path TEXT,reported_utc TEXT NOT NULL,PRIMARY KEY(device_id,name,version,publisher));";cmd.ExecuteNonQuery();}
