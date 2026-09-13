@@ -64,9 +64,11 @@ public static class BrowserPolicy
                 key.SetValue("ProxyBypassList", new[] { "<local>" }, RegistryValueKind.MultiString);
                 DeleteValue(key, "URLBlocklist");
                 DeleteSubKeyTree(key, "URLBlocklist");
-                var blocked = policy.BlockedDomains.Where(IsValidDomain)
+
+                var blocked = PolicyRules.GetBlockedDomains(policy)
                     .SelectMany(d => new[] { $"*://{d}/*", $"*://*.{d}/*" })
-                    .Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
+                    .Distinct(StringComparer.OrdinalIgnoreCase)
+                    .ToArray();
                 if (blocked.Length > 0)
                 {
                     using var list = key.CreateSubKey("URLBlocklist", true);
@@ -103,5 +105,4 @@ public static class BrowserPolicy
 
     private static void DeleteValue(RegistryKey key, string name) { try { key.DeleteValue(name, false); } catch { } }
     private static void DeleteSubKeyTree(RegistryKey key, string name) { try { key.DeleteSubKeyTree(name, false); } catch { } }
-    private static bool IsValidDomain(string d) => !string.IsNullOrWhiteSpace(d) && d.Length <= 253 && d.Contains('.') && d.All(c => char.IsLetterOrDigit(c) || c is '.' or '-');
 }
