@@ -1,4 +1,3 @@
-using System.Diagnostics;
 using System.Reflection;
 using System.Runtime.InteropServices;
 using System.Security.Cryptography;
@@ -24,7 +23,7 @@ public sealed class AutoUpdater
         try
         {
             using var request = new HttpRequestMessage(HttpMethod.Get, ReleasesUrl);
-            request.Headers.UserAgent.ParseAdd("SuperWall-Kids-Updater/2.0");
+            request.Headers.UserAgent.ParseAdd("SuperWall-Kids-Updater/2.1");
             request.Headers.Accept.ParseAdd("application/vnd.github+json");
             using var response = await _http.SendAsync(request, ct);
             if (!response.IsSuccessStatusCode) return;
@@ -40,7 +39,6 @@ public sealed class AutoUpdater
                 if (!TryGetVersion(tag, out var candidate)) continue;
                 if (latest is null || candidate > latest) { latest = candidate; selectedRelease = release; }
             }
-
             if (selectedRelease is null || latest is null || latest <= GetCurrentVersion()) return;
 
             JsonElement? agent = null;
@@ -75,7 +73,6 @@ public sealed class AutoUpdater
 
             if (!MoveFileEx(tempAgent, target, MoveFileReplaceExisting | MoveFileDelayUntilReboot)) { TryDelete(tempAgent); return; }
             tempAgent = null;
-            try { Process.Start(new ProcessStartInfo { FileName = "shutdown.exe", Arguments = "/r /t 5 /d p:4:1 /c \"SuperWall Kids update\"", UseShellExecute = false, CreateNoWindow = true }); } catch { }
         }
         catch
         {
@@ -106,22 +103,15 @@ public sealed class AutoUpdater
 
     private async Task DownloadAsync(string url, string path, CancellationToken ct)
     {
-        using var request = new HttpRequestMessage(HttpMethod.Get, url);
-        request.Headers.UserAgent.ParseAdd("SuperWall-Kids-Updater/2.0");
-        using var response = await _http.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, ct);
-        response.EnsureSuccessStatusCode();
-        await using var input = await response.Content.ReadAsStreamAsync(ct);
-        await using var output = new FileStream(path, FileMode.CreateNew, FileAccess.Write, FileShare.None);
-        await input.CopyToAsync(output, ct);
+        using var request = new HttpRequestMessage(HttpMethod.Get, url); request.Headers.UserAgent.ParseAdd("SuperWall-Kids-Updater/2.1");
+        using var response = await _http.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, ct); response.EnsureSuccessStatusCode();
+        await using var input = await response.Content.ReadAsStreamAsync(ct); await using var output = new FileStream(path, FileMode.CreateNew, FileAccess.Write, FileShare.None); await input.CopyToAsync(output, ct);
     }
 
     private async Task<string> DownloadTextAsync(string url, CancellationToken ct)
     {
-        using var request = new HttpRequestMessage(HttpMethod.Get, url);
-        request.Headers.UserAgent.ParseAdd("SuperWall-Kids-Updater/2.0");
-        using var response = await _http.SendAsync(request, ct);
-        response.EnsureSuccessStatusCode();
-        return await response.Content.ReadAsStringAsync(ct);
+        using var request = new HttpRequestMessage(HttpMethod.Get, url); request.Headers.UserAgent.ParseAdd("SuperWall-Kids-Updater/2.1");
+        using var response = await _http.SendAsync(request, ct); response.EnsureSuccessStatusCode(); return await response.Content.ReadAsStringAsync(ct);
     }
 
     [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
