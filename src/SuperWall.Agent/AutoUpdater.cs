@@ -1,5 +1,5 @@
+using System.Diagnostics;
 using System.Reflection;
-using System.Runtime.InteropServices;
 using System.Security.Cryptography;
 using System.Text.Json;
 
@@ -10,8 +10,6 @@ public sealed class AutoUpdater
     private const string ReleasesUrl = "https://api.github.com/repos/Bendemen-Studios/SuperWall/releases?per_page=20";
     private const string AgentAssetName = "SuperWall-Agent-win-x64.exe";
     private const string AgentChecksumName = "SHA256-Agent.txt";
-    private const int MoveFileReplaceExisting = 0x1;
-    private const int MoveFileDelayUntilReboot = 0x4;
     private readonly HttpClient _http = new() { Timeout = TimeSpan.FromMinutes(5) };
     private readonly string _stateDir;
 
@@ -20,10 +18,11 @@ public sealed class AutoUpdater
     public async Task CheckAndInstallAsync(CancellationToken ct)
     {
         string? tempAgent = null;
+        string? helperScript = null;
         try
         {
             using var request = new HttpRequestMessage(HttpMethod.Get, ReleasesUrl);
-            request.Headers.UserAgent.ParseAdd("SuperWall-Kids-Updater/2.1");
+            request.Headers.UserAgent.ParseAdd("SuperWall-Kids-Updater/2.2");
             request.Headers.Accept.ParseAdd("application/vnd.github+json");
             using var response = await _http.SendAsync(request, ct);
             if (!response.IsSuccessStatusCode) return;
@@ -54,6 +53,7 @@ public sealed class AutoUpdater
             Directory.CreateDirectory(_stateDir);
             var target = Environment.ProcessPath;
             if (string.IsNullOrWhiteSpace(target) || !File.Exists(target)) return;
+
             tempAgent = Path.Combine(_stateDir, $"SuperWall-Agent-{latest}.download");
             TryDelete(tempAgent);
             var downloadUrl = agent.Value.GetProperty("browser_download_url").GetString();
@@ -65,19 +65,74 @@ public sealed class AutoUpdater
             {
                 var checksumUrl = checksum.Value.GetProperty("browser_download_url").GetString();
                 if (string.IsNullOrWhiteSpace(checksumUrl)) { TryDelete(tempAgent); return; }
-                var expected = (await DownloadTextAsync(checksumUrl, ct)).Split(new[] { ' ', '\t', '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries).FirstOrDefault();
+                var expected = (await DownloadTextAsync(checksumUrl, ct))
+                    .Split(new[] { ' ', '\t', '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries)
+                    .FirstOrDefault();
                 await using var hashStream = File.OpenRead(tempAgent);
                 var actual = Convert.ToHexString(await SHA256.HashDataAsync(hashStream, ct));
-                if (string.IsNullOrWhiteSpace(expected) || !actual.Equals(expected, StringComparison.OrdinalIgnoreCase)) { TryDelete(tempAgent); return; }
+                if (string.IsNullOrWhiteSpace(expected) || !actual.Equals(expected, StringComparison.OrdinalIgnoreCase))
+                {
+                    TryDelete(tempAgent);
+                    return;
+                }
             }
 
-            if (!MoveFileEx(tempAgent, target, MoveFileReplaceExisting | MoveFileDelayUntilReboot)) { TryDelete(tempAgent); return; }
-            tempAgent = null;
+            // The agent cannot replace its own executable while it is running.
+            // Start an independent Windows command process that waits for the service
+            // to stop, replaces the executable, then starts the service again. This
+            // makes updates live without requiring a Windows reboot or user action.
+            helperScript = Path.Combine(_stateDir, $"SuperWall-Agent-{latest}.update.cmd");
+            var script = BuildUpdateScript(tempAgent, target, helperScript);
+            await File.WriteAllTextAsync(helperScript, script, ct);
+
+            var psi = new ProcessStartInfo
+            {
+                FileName = Environment.GetEnvironmentVariable("ComSpec") ?? "cmd.exe",
+                Arguments = $"/d /c \"{helperScript}\"",
+                CreateNoWindow = true,
+                UseShellExecute = false,
+                WindowStyle = ProcessWindowStyle.Hidden
+            };
+            using var helper = Process.Start(psi);
+            if (helper is null)
+            {
+                TryDelete(tempAgent);
+                TryDelete(helperScript);
+            }
+            else
+            {
+                tempAgent = null;
+                helperScript = null;
+            }
         }
         catch
         {
             if (!string.IsNullOrWhiteSpace(tempAgent)) TryDelete(tempAgent);
+            if (!string.IsNullOrWhiteSpace(helperScript)) TryDelete(helperScript);
         }
+    }
+
+    private static string BuildUpdateScript(string source, string target, string scriptPath)
+    {
+        static string Q(string value) => "\"" + value.Replace("\"", "\"\"") + "\"";
+        var sourceQ = Q(source);
+        var targetQ = Q(target);
+        var scriptQ = Q(scriptPath);
+        return $"@echo off\r\n" +
+               "setlocal\r\n" +
+               "timeout /t 2 /nobreak >nul\r\n" +
+               "sc.exe stop SuperWallAgent >nul 2>&1\r\n" +
+               "for /l %%i in (1,1,30) do (\r\n" +
+               "  sc.exe query SuperWallAgent | findstr /i \"STOPPED\" >nul && goto replace\r\n" +
+               "  timeout /t 1 /nobreak >nul\r\n" +
+               ")\r\n" +
+               "exit /b 1\r\n" +
+               ":replace\r\n" +
+               $"copy /y {sourceQ} {targetQ} >nul || exit /b 1\r\n" +
+               "sc.exe start SuperWallAgent >nul 2>&1\r\n" +
+               $"del /f /q {sourceQ} >nul 2>&1\r\n" +
+               $"del /f /q {scriptQ} >nul 2>&1\r\n" +
+               "exit /b 0\r\n";
     }
 
     private Version GetCurrentVersion()
@@ -103,19 +158,23 @@ public sealed class AutoUpdater
 
     private async Task DownloadAsync(string url, string path, CancellationToken ct)
     {
-        using var request = new HttpRequestMessage(HttpMethod.Get, url); request.Headers.UserAgent.ParseAdd("SuperWall-Kids-Updater/2.1");
-        using var response = await _http.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, ct); response.EnsureSuccessStatusCode();
-        await using var input = await response.Content.ReadAsStreamAsync(ct); await using var output = new FileStream(path, FileMode.CreateNew, FileAccess.Write, FileShare.None); await input.CopyToAsync(output, ct);
+        using var request = new HttpRequestMessage(HttpMethod.Get, url);
+        request.Headers.UserAgent.ParseAdd("SuperWall-Kids-Updater/2.2");
+        using var response = await _http.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, ct);
+        response.EnsureSuccessStatusCode();
+        await using var input = await response.Content.ReadAsStreamAsync(ct);
+        await using var output = new FileStream(path, FileMode.CreateNew, FileAccess.Write, FileShare.None);
+        await input.CopyToAsync(output, ct);
     }
 
     private async Task<string> DownloadTextAsync(string url, CancellationToken ct)
     {
-        using var request = new HttpRequestMessage(HttpMethod.Get, url); request.Headers.UserAgent.ParseAdd("SuperWall-Kids-Updater/2.1");
-        using var response = await _http.SendAsync(request, ct); response.EnsureSuccessStatusCode(); return await response.Content.ReadAsStringAsync(ct);
+        using var request = new HttpRequestMessage(HttpMethod.Get, url);
+        request.Headers.UserAgent.ParseAdd("SuperWall-Kids-Updater/2.2");
+        using var response = await _http.SendAsync(request, ct);
+        response.EnsureSuccessStatusCode();
+        return await response.Content.ReadAsStringAsync(ct);
     }
-
-    [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
-    private static extern bool MoveFileEx(string existingFileName, string? newFileName, int flags);
 
     private static void TryDelete(string path) { try { File.Delete(path); } catch { } }
 }
