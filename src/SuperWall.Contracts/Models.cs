@@ -18,11 +18,17 @@ public sealed class SuperWallPolicy
     [JsonPropertyName("blockedDomains")]
     public List<string> BlockedDomains { get; set; } = new() { "tiktok.com", "youtube.com", "roblox.com", "pornhub.com" };
 
+    [JsonPropertyName("blockedCategories")]
+    public List<string> BlockedCategories { get; set; } = new();
+
+    [JsonPropertyName("allowedDomains")]
+    public List<string> AllowedDomains { get; set; } = new();
+
     [JsonPropertyName("searchHistoryEnabled")]
     public bool SearchHistoryEnabled { get; set; } = true;
 
     [JsonPropertyName("searchHistoryRetentionDays")]
-    public int SearchHistoryRetentionDays => Profile == RiskProfile.High ? 30 : 14;
+    public int SearchHistoryRetentionDays => Profile == RiskProfile.High ? 365 : 30;
 
     [JsonPropertyName("downloadsBlocked")]
     public bool DownloadsBlocked { get; set; } = true;
@@ -35,6 +41,18 @@ public sealed class SuperWallPolicy
 
     [JsonPropertyName("blockPortableBrowsers")]
     public bool BlockPortableBrowsers { get; set; } = true;
+
+    [JsonPropertyName("appBlockingEnabled")]
+    public bool AppBlockingEnabled { get; set; } = false;
+
+    [JsonPropertyName("blockedApplications")]
+    public List<string> BlockedApplications { get; set; } = new();
+
+    [JsonPropertyName("allowedApplications")]
+    public List<string> AllowedApplications { get; set; } = new();
+
+    [JsonPropertyName("blockedApplicationPaths")]
+    public List<string> BlockedApplicationPaths { get; set; } = new();
 
     // Legacy compatibility only. These values are never serialized or used for approval.
     [JsonIgnore]
