@@ -27,16 +27,25 @@ jobs:
         with:
           dotnet-version: '8.0.x'
 
-      - name: Read installer version
+      - name: Read and validate versions
         shell: pwsh
         run: |
-          $content = Get-Content -Raw installer/SuperWallKids.iss
-          $match = [regex]::Match($content, '#define\s+MyAppVersion\s+"([^"]+)"')
-          if (-not $match.Success) { throw 'Could not determine MyAppVersion from installer/SuperWallKids.iss.' }
-          $version = $match.Groups[1].Value
-          if ($version -notmatch '^\d+\.\d+\.\d+(?:\.\d+)?$') { throw "Invalid installer version: $version" }
-          "INSTALLER_VERSION=$version" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
-          Write-Host "Installer version: $version"
+          $installerContent = Get-Content -Raw installer/SuperWallKids.iss
+          $installerMatch = [regex]::Match($installerContent, '#define\s+MyAppVersion\s+"([^"]+)"')
+          if (-not $installerMatch.Success) { throw 'Could not determine MyAppVersion from installer/SuperWallKids.iss.' }
+          $installerVersion = $installerMatch.Groups[1].Value
+          if ($installerVersion -notmatch '^\d+\.\d+\.\d+(?:\.\d+)?$') { throw "Invalid installer version: $installerVersion" }
+
+          $agentContent = Get-Content -Raw src/SuperWall.Agent/SuperWall.Agent.csproj
+          $agentMatch = [regex]::Match($agentContent, '<Version>([^<]+)</Version>')
+          if (-not $agentMatch.Success) { throw 'Could not determine agent Version from SuperWall.Agent.csproj.' }
+          $agentVersion = $agentMatch.Groups[1].Value.Trim()
+          if ($installerVersion -ne $agentVersion) {
+            throw "Version mismatch: installer=$installerVersion agent=$agentVersion"
+          }
+
+          "INSTALLER_VERSION=$installerVersion" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          Write-Host "SuperWall Kids version: $installerVersion"
 
       - name: Restore
         run: dotnet restore src/SuperWall.Agent/SuperWall.Agent.csproj
