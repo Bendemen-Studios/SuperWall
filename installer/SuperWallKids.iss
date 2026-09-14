@@ -1,5 +1,5 @@
 #define MyAppName "SuperWall Kids"
-#define MyAppVersion "0.5.3"
+#define MyAppVersion "0.5.4"
 #define MyPublisher "Bendemen Studios"
 #define MyExeName "SuperWall.Agent.exe"
 #define ServiceSddl "D:(A;;CCLCSWRPWPDTLOCRRC;;;SY)(A;;CCDCLCSWRPWPDTLOCRSDRCWDWO;;;BA)(A;;CCLCRP;;;AU)"
@@ -133,19 +133,41 @@ begin
 
   if not IsUpgrade then
   begin
-    DashboardUrl := DashboardPage.Values[0];
+    DashboardUrl := Trim(DashboardPage.Values[0]);
     EnrollmentKey := Trim(EnrollmentPage.Values[0]);
-    SaveStringToFile(DashboardFile, DashboardUrl, False);
-    SaveStringToFile(EnrollmentFile, EnrollmentKey, False);
+
+    if not SaveStringToFile(DashboardFile, DashboardUrl, False) then
+    begin
+      MsgBox('Het dashboardadres kon niet veilig worden opgeslagen. Installatie afgebroken.', mbError, MB_OK);
+      Abort;
+    end;
+    if not SaveStringToFile(EnrollmentFile, EnrollmentKey, False) then
+    begin
+      MsgBox('De enrollment key kon niet veilig worden opgeslagen. Installatie afgebroken.', mbError, MB_OK);
+      Abort;
+    end;
+    if not FileExists(EnrollmentFile) then
+    begin
+      MsgBox('De enrollment key ontbreekt na opslag. Installatie afgebroken.', mbError, MB_OK);
+      Abort;
+    end;
 
     TargetUser := GetEnv('SUPERWALL_TARGET_USER');
     if Trim(TargetUser) = '' then
       TargetUser := ExpandConstant('{username}');
-    SaveStringToFile(TargetUserFile, TargetUser, False);
+    if not SaveStringToFile(TargetUserFile, TargetUser, False) or not FileExists(TargetUserFile) then
+    begin
+      MsgBox('Het doelgebruikersaccount kon niet worden opgeslagen. Installatie afgebroken.', mbError, MB_OK);
+      Abort;
+    end;
 
-    RegWriteStringValue(HKEY_LOCAL_MACHINE,
+    if not RegWriteStringValue(HKEY_LOCAL_MACHINE,
       'SYSTEM\CurrentControlSet\Control\Session Manager\Environment',
-      'SUPERWALL_DASHBOARD', DashboardUrl);
+      'SUPERWALL_DASHBOARD', DashboardUrl) then
+    begin
+      MsgBox('De dashboardconfiguratie kon niet in Windows worden opgeslagen.', mbError, MB_OK);
+      Abort;
+    end;
   end
   else if not FileExists(TargetUserFile) then
   begin
