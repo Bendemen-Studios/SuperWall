@@ -13,57 +13,387 @@ public sealed class PolicySyncService : BackgroundService
     private const string EnrollmentFileName = "enrollment.key";
     private const string DashboardFileName = "dashboard.url";
     private readonly HttpClient _http = new() { Timeout = TimeSpan.FromSeconds(15) };
-    private SuperWallPolicy _policy = new(); private string _deviceId = ""; private string _dashboard = ""; private string _agentToken = ""; private bool _revoked;
-    private readonly SearchHistoryCollector _history = new(); private BlockProxy? _proxy; private LocalControlServer? _local; private PortableBrowserGuard? _portableBrowsers; private AppGuard? _appGuard; private AutoUpdater? _updater; private long _lastAppliedPolicyVersion = -1; private DateTimeOffset _nextInventory = DateTimeOffset.MinValue;
+    private SuperWallPolicy _policy = new();
+    private string _deviceId = "";
+    private string _dashboard = "";
+    private string _agentToken = "";
+    private bool _revoked;
+    private readonly SearchHistoryCollector _history = new();
+    private BlockProxy? _proxy;
+    private LocalControlServer? _local;
+    private PortableBrowserGuard? _portableBrowsers;
+    private AppGuard? _appGuard;
+    private AutoUpdater? _updater;
+    private long _lastAppliedPolicyVersion = -1;
+    private DateTimeOffset _nextInventory = DateTimeOffset.MinValue;
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
-        Directory.CreateDirectory(_stateDir); SecurityHardening.Apply(); NetworkHardening.ClearLegacyMachineEnforcement(); LoadCached();
-        await SyncOnce(stoppingToken); if (!_revoked) ApplyPolicy(); StartLocalServices(); _updater = new AutoUpdater(_stateDir); var nextUpdateCheck = DateTimeOffset.UtcNow;
+        Directory.CreateDirectory(_stateDir);
+        SecurityHardening.Apply();
+        NetworkHardening.ClearLegacyMachineEnforcement();
+        LoadCached();
+
+        await SyncOnce(stoppingToken);
+        if (!_revoked) ApplyPolicy();
+        StartLocalServices();
+        _updater = new AutoUpdater(_stateDir);
+        var nextUpdateCheck = DateTimeOffset.UtcNow;
+
         while (!stoppingToken.IsCancellationRequested)
         {
-            await SyncOnce(stoppingToken); SecurityHardening.Apply(); if (!_revoked) ApplyPolicy();
-            if (!_revoked && DateTimeOffset.UtcNow >= nextUpdateCheck) { await _updater.CheckAndInstallAsync(stoppingToken); nextUpdateCheck = DateTimeOffset.UtcNow.AddMinutes(15); }
+            await SyncOnce(stoppingToken);
+            SecurityHardening.Apply();
+            if (!_revoked) ApplyPolicy();
+
+            if (!_revoked && DateTimeOffset.UtcNow >= nextUpdateCheck)
+            {
+                await _updater.CheckAndInstallAsync(stoppingToken);
+                nextUpdateCheck = DateTimeOffset.UtcNow.AddMinutes(15);
+            }
+
             await Task.Delay(TimeSpan.FromSeconds(60), stoppingToken);
         }
     }
-    private void StartLocalServices(){if(_revoked)return;if(_local is null){_local=new LocalControlServer(()=>_policy,ApplyPolicy);_local.Start();}ApplyPortableBrowserPolicy();ApplyAppPolicy();}
-    private void ApplyPortableBrowserPolicy(){if(_revoked||!_policy.BlockPortableBrowsers){_portableBrowsers?.Dispose();_portableBrowsers=null;return;}if(_portableBrowsers is null){_portableBrowsers=new PortableBrowserGuard();_portableBrowsers.Start();}}
-    private void ApplyAppPolicy(){if(_revoked){_appGuard?.Dispose();_appGuard=null;return;}_appGuard??=new AppGuard();_appGuard.Apply(_policy);}
-    private void LoadCached(){var file=Path.Combine(_stateDir,"policy.json");try{_policy=JsonSerializer.Deserialize<SuperWallPolicy>(File.ReadAllText(file))??new();}catch{_policy=new();}var dashboardFile=Path.Combine(_stateDir,DashboardFileName);var configured="";try{if(File.Exists(dashboardFile))configured=File.ReadAllText(dashboardFile).Trim();}catch{}_dashboard=string.IsNullOrWhiteSpace(configured)?(Environment.GetEnvironmentVariable("SUPERWALL_DASHBOARD")??_policy.DashboardUrl):configured;_agentToken=LocalSecrets.Load("agent-token")??"";_deviceId=LoadOrCreateDeviceId();}
-    private string LoadOrCreateDeviceId(){var file=Path.Combine(_stateDir,"device.id");try{if(File.Exists(file)){var existing=File.ReadAllText(file).Trim();if(!string.IsNullOrWhiteSpace(existing))return existing;}var id=$"SW-{Convert.ToHexString(RandomNumberGenerator.GetBytes(8))}";File.WriteAllText(file,id);return id;}catch{return $"SW-{Convert.ToHexString(RandomNumberGenerator.GetBytes(8))}";}}
-    private string? LoadEnrollmentKey(){try{var file=Path.Combine(_stateDir,EnrollmentFileName);return File.Exists(file)?File.ReadAllText(file).Trim():null;}catch{return null;}}
-    private void ConsumeEnrollmentKey(){try{File.Delete(Path.Combine(_stateDir,EnrollmentFileName));}catch{}try{Environment.SetEnvironmentVariable("SUPERWALL_ENROLLMENT_KEY",null,EnvironmentVariableTarget.Machine);}catch{}}
-    private void Log(string message){try{Directory.CreateDirectory(_stateDir);File.AppendAllText(Path.Combine(_stateDir,"agent.log"),$"{DateTimeOffset.UtcNow:O} {message}{Environment.NewLine}");}catch{}}
-    private async Task SyncOnce(CancellationToken ct)
+
+    private void StartLocalServices()
     {
-        if(string.IsNullOrWhiteSpace(_dashboard)){Log("Sync skipped: dashboard URL is empty.");return;}if(!Uri.TryCreate(_dashboard,UriKind.Absolute,out var baseUri)||!string.Equals(baseUri.Scheme,Uri.UriSchemeHttps,StringComparison.OrdinalIgnoreCase)){Log("Sync skipped: dashboard URL is not HTTPS.");return;}
+        if (_revoked) return;
+        if (_local is null)
+        {
+            _local = new LocalControlServer(() => _policy, ApplyPolicy);
+            _local.Start();
+        }
+        ApplyPortableBrowserPolicy();
+        ApplyAppPolicy();
+    }
+
+    private void ApplyPortableBrowserPolicy()
+    {
+        if (_revoked || !_policy.BlockPortableBrowsers)
+        {
+            _portableBrowsers?.Dispose();
+            _portableBrowsers = null;
+            return;
+        }
+        _portableBrowsers ??= new PortableBrowserGuard();
+        _portableBrowsers.Start();
+    }
+
+    private void ApplyAppPolicy()
+    {
+        if (_revoked)
+        {
+            _appGuard?.Dispose();
+            _appGuard = null;
+            return;
+        }
+        _appGuard ??= new AppGuard();
+        _appGuard.Apply(_policy);
+    }
+
+    private void LoadCached()
+    {
+        var file = Path.Combine(_stateDir, "policy.json");
+        try { _policy = JsonSerializer.Deserialize<SuperWallPolicy>(File.ReadAllText(file)) ?? new(); }
+        catch (Exception ex) { _policy = new(); AgentLogger.Error("Could not load cached policy.", ex); }
+
+        var dashboardFile = Path.Combine(_stateDir, DashboardFileName);
+        var configured = "";
+        try { if (File.Exists(dashboardFile)) configured = File.ReadAllText(dashboardFile).Trim(); }
+        catch (Exception ex) { AgentLogger.Error("Could not read dashboard.url.", ex); }
+
+        _dashboard = string.IsNullOrWhiteSpace(configured)
+            ? (Environment.GetEnvironmentVariable("SUPERWALL_DASHBOARD") ?? _policy.DashboardUrl)
+            : configured;
+        _agentToken = LocalSecrets.Load("agent-token") ?? "";
+        _deviceId = LoadOrCreateDeviceId();
+        AgentLogger.Info($"Agent started. DeviceId={_deviceId}, Dashboard={RedactUrl(_dashboard)}, TokenPresent={!string.IsNullOrWhiteSpace(_agentToken)}");
+    }
+
+    private string LoadOrCreateDeviceId()
+    {
+        var file = Path.Combine(_stateDir, "device.id");
         try
         {
-            if(_revoked){if(!HasEnrollmentKey()){Log("Device is revoked and no enrollment key is available.");return;}_agentToken="";}
-            if(string.IsNullOrWhiteSpace(_agentToken)){await Enroll(ct);if(_revoked||string.IsNullOrWhiteSpace(_agentToken))return;}
-            using var request=new HttpRequestMessage(HttpMethod.Get,$"{_dashboard.TrimEnd('/')}/api/agent/{Uri.EscapeDataString(_deviceId)}");request.Headers.Add("X-SuperWall-Agent",_agentToken);using var response=await _http.SendAsync(request,ct);
-            if(response.StatusCode==System.Net.HttpStatusCode.Unauthorized){Log("Agent token rejected by dashboard; clearing local token.");ClearRevokedState();return;}if(!response.IsSuccessStatusCode){Log($"Policy sync returned HTTP {(int)response.StatusCode}.");return;}var envelope=await response.Content.ReadFromJsonAsync<PolicyEnvelope>(cancellationToken:ct);if(envelope is null||envelope.Policy.Version<_policy.Version)return;_policy=envelope.Policy;SavePolicy();ApplyPolicy();
-            var inventoryDue=DateTimeOffset.UtcNow>=_nextInventory;
-            foreach(var command in envelope.Commands){if(command.Type.Equals("request_history",StringComparison.OrdinalIgnoreCase))await UploadHistory(command.Id,ct);else if(command.Type.Equals("request_app_inventory",StringComparison.OrdinalIgnoreCase))inventoryDue=true;}
-            if(inventoryDue){await UploadInstalledApplications(ct);_nextInventory=DateTimeOffset.UtcNow.AddHours(6);}
+            if (File.Exists(file))
+            {
+                var existing = File.ReadAllText(file).Trim();
+                if (!string.IsNullOrWhiteSpace(existing)) return existing;
+            }
+
+            var id = $"SW-{Convert.ToHexString(RandomNumberGenerator.GetBytes(8))}";
+            var temp = file + ".tmp";
+            File.WriteAllText(temp, id);
+            File.Move(temp, file, true);
+            return id;
         }
-        catch(OperationCanceledException)when(ct.IsCancellationRequested){throw;}catch(Exception ex){Log($"Sync error: {ex.GetType().Name}: {ex.Message}");}
+        catch (Exception ex)
+        {
+            AgentLogger.Error("Could not persist device.id; using an in-memory fallback.", ex);
+            return $"SW-{Convert.ToHexString(RandomNumberGenerator.GetBytes(8))}";
+        }
     }
-    private async Task UploadInstalledApplications(CancellationToken ct){if(string.IsNullOrWhiteSpace(_dashboard)||string.IsNullOrWhiteSpace(_agentToken)||string.IsNullOrWhiteSpace(_deviceId))return;var upload=new InstalledApplicationsUpload{DeviceId=_deviceId,Applications=InstalledApplicationCollector.Collect()};using var request=new HttpRequestMessage(HttpMethod.Post,$"{_dashboard.TrimEnd('/')}/api/agent/{Uri.EscapeDataString(_deviceId)}/applications"){Content=JsonContent.Create(upload)};request.Headers.Add("X-SuperWall-Agent",_agentToken);using var response=await _http.SendAsync(request,ct);if(!response.IsSuccessStatusCode)Log($"Application inventory upload returned HTTP {(int)response.StatusCode}.");}
-    private bool HasEnrollmentKey()=>!string.IsNullOrWhiteSpace(LoadEnrollmentKey());
-    private void ClearRevokedState(){_revoked=true;_agentToken="";LocalSecrets.Delete("agent-token");_proxy?.Dispose();_proxy=null;BrowserPolicy.ClearEnforcement();DownloadGuard.SetEnabled(false,_policy);_local?.Dispose();_local=null;_portableBrowsers?.Dispose();_portableBrowsers=null;_appGuard?.Dispose();_appGuard=null;}
+
+    private string? LoadEnrollmentKey()
+    {
+        try
+        {
+            var file = Path.Combine(_stateDir, EnrollmentFileName);
+            return File.Exists(file) ? File.ReadAllText(file).Trim() : null;
+        }
+        catch (Exception ex)
+        {
+            AgentLogger.Error("Could not read enrollment.key.", ex);
+            return null;
+        }
+    }
+
+    private void ConsumeEnrollmentKey()
+    {
+        try { File.Delete(Path.Combine(_stateDir, EnrollmentFileName)); }
+        catch (Exception ex) { AgentLogger.Error("Could not remove enrollment.key after successful enrollment.", ex); }
+        try { Environment.SetEnvironmentVariable("SUPERWALL_ENROLLMENT_KEY", null, EnvironmentVariableTarget.Machine); }
+        catch (Exception ex) { AgentLogger.Error("Could not clear SUPERWALL_ENROLLMENT_KEY.", ex); }
+    }
+
+    private async Task SyncOnce(CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(_dashboard))
+        {
+            AgentLogger.Error("Dashboard URL is empty; sync skipped.");
+            return;
+        }
+        if (!Uri.TryCreate(_dashboard, UriKind.Absolute, out var baseUri) || !string.Equals(baseUri.Scheme, Uri.UriSchemeHttps, StringComparison.OrdinalIgnoreCase))
+        {
+            AgentLogger.Error($"Dashboard URL is not a valid HTTPS URL: {RedactUrl(_dashboard)}");
+            return;
+        }
+
+        try
+        {
+            if (_revoked)
+            {
+                if (!HasEnrollmentKey()) return;
+                _agentToken = "";
+            }
+
+            if (string.IsNullOrWhiteSpace(_agentToken))
+            {
+                await Enroll(ct);
+                if (_revoked || string.IsNullOrWhiteSpace(_agentToken)) return;
+            }
+
+            using var request = new HttpRequestMessage(HttpMethod.Get, $"{_dashboard.TrimEnd('/')}/api/agent/{Uri.EscapeDataString(_deviceId)}");
+            request.Headers.Add("X-SuperWall-Agent", _agentToken);
+            using var response = await _http.SendAsync(request, ct);
+
+            if (response.StatusCode == System.Net.HttpStatusCode.Unauthorized)
+            {
+                AgentLogger.Error("Dashboard rejected the agent token (401); clearing local enrollment token.");
+                ClearRevokedState();
+                return;
+            }
+            if (!response.IsSuccessStatusCode)
+            {
+                AgentLogger.Error($"Policy sync failed with HTTP {(int)response.StatusCode} ({response.ReasonPhrase}).");
+                return;
+            }
+
+            var envelope = await response.Content.ReadFromJsonAsync<PolicyEnvelope>(cancellationToken: ct);
+            if (envelope is null)
+            {
+                AgentLogger.Error("Policy sync returned an empty/invalid response.");
+                return;
+            }
+            if (envelope.Policy.Version < _policy.Version) return;
+
+            _policy = envelope.Policy;
+            SavePolicy();
+            ApplyPolicy();
+
+            var inventoryDue = DateTimeOffset.UtcNow >= _nextInventory;
+            foreach (var command in envelope.Commands)
+            {
+                if (command.Type.Equals("request_history", StringComparison.OrdinalIgnoreCase))
+                    await UploadHistory(command.Id, ct);
+                else if (command.Type.Equals("request_app_inventory", StringComparison.OrdinalIgnoreCase))
+                    inventoryDue = true;
+            }
+
+            if (inventoryDue)
+            {
+                await UploadInstalledApplications(ct);
+                _nextInventory = DateTimeOffset.UtcNow.AddHours(6);
+            }
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }
+        catch (HttpRequestException ex) { AgentLogger.Error("Policy sync network error.", ex); }
+        catch (JsonException ex) { AgentLogger.Error("Policy sync JSON error.", ex); }
+        catch (Exception ex) { AgentLogger.Error("Unexpected policy sync error.", ex); }
+    }
+
+    private async Task UploadInstalledApplications(CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(_dashboard) || string.IsNullOrWhiteSpace(_agentToken) || string.IsNullOrWhiteSpace(_deviceId)) return;
+        var upload = new InstalledApplicationsUpload { DeviceId = _deviceId, Applications = InstalledApplicationCollector.Collect() };
+        using var request = new HttpRequestMessage(HttpMethod.Post, $"{_dashboard.TrimEnd('/')}/api/agent/{Uri.EscapeDataString(_deviceId)}/applications") { Content = JsonContent.Create(upload) };
+        request.Headers.Add("X-SuperWall-Agent", _agentToken);
+        using var response = await _http.SendAsync(request, ct);
+        if (!response.IsSuccessStatusCode) AgentLogger.Error($"Application inventory upload failed with HTTP {(int)response.StatusCode} ({response.ReasonPhrase}).");
+    }
+
+    private bool HasEnrollmentKey() => !string.IsNullOrWhiteSpace(LoadEnrollmentKey());
+
+    private void ClearRevokedState()
+    {
+        _revoked = true;
+        _agentToken = "";
+        LocalSecrets.Delete("agent-token");
+        _proxy?.Dispose(); _proxy = null;
+        BrowserPolicy.ClearEnforcement();
+        DownloadGuard.SetEnabled(false, _policy);
+        _local?.Dispose(); _local = null;
+        _portableBrowsers?.Dispose(); _portableBrowsers = null;
+        _appGuard?.Dispose(); _appGuard = null;
+    }
+
     private async Task Enroll(CancellationToken ct)
     {
-        var enrollmentKey=LoadEnrollmentKey();if(string.IsNullOrWhiteSpace(enrollmentKey)){Log("Enrollment skipped: no enrollment.key found.");return;}
-        Log($"Enrollment started for device {_deviceId} against {_dashboard.TrimEnd('/') }.");
-        using var request=new HttpRequestMessage(HttpMethod.Post,$"{_dashboard.TrimEnd('/')}/api/enroll/{Uri.EscapeDataString(_deviceId)}");request.Headers.Add("X-SuperWall-Enrollment",enrollmentKey);request.Content=JsonContent.Create(new{computerName=Environment.MachineName,osVersion=Environment.OSVersion.VersionString});using var response=await _http.SendAsync(request,ct);
-        if(!response.IsSuccessStatusCode){Log($"Enrollment returned HTTP {(int)response.StatusCode}.");return;}
-        var result=await response.Content.ReadFromJsonAsync<EnrollResponse>(cancellationToken:ct);if(result is null||string.IsNullOrWhiteSpace(result.AgentToken)){Log("Enrollment response did not contain an agent token.");return;}if(!LocalSecrets.Save("agent-token",result.AgentToken)){Log("Enrollment succeeded but saving the agent token failed.");return;}_agentToken=result.AgentToken;_policy=result.Policy??new();SavePolicy();ConsumeEnrollmentKey();_revoked=false;Log("Enrollment completed successfully.");ApplyPolicy();StartLocalServices();
+        var enrollmentKey = LoadEnrollmentKey();
+        if (string.IsNullOrWhiteSpace(enrollmentKey))
+        {
+            AgentLogger.Error("No enrollment.key found; the device cannot enroll.");
+            return;
+        }
+
+        try
+        {
+            using var request = new HttpRequestMessage(HttpMethod.Post, $"{_dashboard.TrimEnd('/')}/api/enroll/{Uri.EscapeDataString(_deviceId)}");
+            request.Headers.Add("X-SuperWall-Enrollment", enrollmentKey);
+            request.Content = JsonContent.Create(new { computerName = Environment.MachineName, osVersion = Environment.OSVersion.VersionString });
+            using var response = await _http.SendAsync(request, ct);
+
+            if (!response.IsSuccessStatusCode)
+            {
+                AgentLogger.Error($"Enrollment failed with HTTP {(int)response.StatusCode} ({response.ReasonPhrase}).");
+                return;
+            }
+
+            var result = await response.Content.ReadFromJsonAsync<EnrollResponse>(cancellationToken: ct);
+            if (result is null || string.IsNullOrWhiteSpace(result.AgentToken))
+            {
+                AgentLogger.Error("Enrollment response did not contain an agent token.");
+                return;
+            }
+            if (!LocalSecrets.Save("agent-token", result.AgentToken))
+            {
+                AgentLogger.Error("Enrollment succeeded but the agent token could not be saved locally.");
+                return;
+            }
+
+            _agentToken = result.AgentToken;
+            _policy = result.Policy ?? new();
+            SavePolicy();
+            ConsumeEnrollmentKey();
+            _revoked = false;
+            AgentLogger.Info("Enrollment succeeded.");
+            ApplyPolicy();
+            StartLocalServices();
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }
+        catch (HttpRequestException ex) { AgentLogger.Error("Enrollment network error.", ex); }
+        catch (JsonException ex) { AgentLogger.Error("Enrollment response JSON error.", ex); }
+        catch (Exception ex) { AgentLogger.Error("Unexpected enrollment error.", ex); }
     }
-    private void SavePolicy(){try{var path=Path.Combine(_stateDir,"policy.json");var temp=path+".tmp";File.WriteAllText(temp,JsonSerializer.Serialize(_policy,new JsonSerializerOptions{WriteIndented=true}));File.Replace(temp,path,null,true);}catch(Exception ex){Log($"Saving policy failed: {ex.GetType().Name}: {ex.Message}");}}
-    private void ApplyPolicy(){if(_revoked)return;var policyChanged=_lastAppliedPolicyVersion!=_policy.Version;BrowserPolicy.Apply(_policy);if(_policy.UrlBlockingEnabled){if(_proxy is null){var candidate=new BlockProxy(host=>PolicyRules.IsDomainBlocked(_policy,host));try{candidate.Start();_proxy=candidate;}catch{candidate.Dispose();}}}else{_proxy?.Dispose();_proxy=null;}DownloadGuard.SetEnabled(_policy.DownloadsBlocked,_policy);ApplyPortableBrowserPolicy();ApplyAppPolicy();_lastAppliedPolicyVersion=_policy.Version;if(policyChanged)RestartManagedBrowsers();}
-    private static void RestartManagedBrowsers(){foreach(var name in new[]{"msedge","chrome","brave","vivaldi","opera"})try{foreach(var process in Process.GetProcessesByName(name)){try{if(!WindowsUserScope.IsTargetUserProcess(process))continue;if(!process.CloseMainWindow())process.Kill(true);else if(!process.WaitForExit(3000))process.Kill(true);}catch{}finally{process.Dispose();}}}catch{}}
-    private async Task UploadHistory(string requestId,CancellationToken ct){if(!_policy.SearchHistoryEnabled||string.IsNullOrWhiteSpace(_dashboard)||string.IsNullOrWhiteSpace(_agentToken)||string.IsNullOrWhiteSpace(requestId))return;var records=_history.Collect(_policy.SearchHistoryRetentionDays);var upload=new HistoryUpload{DeviceId=_deviceId,RequestId=requestId,Records=records};using var request=new HttpRequestMessage(HttpMethod.Post,$"{_dashboard.TrimEnd('/')}/api/agent/{Uri.EscapeDataString(_deviceId)}/history"){Content=JsonContent.Create(upload)};request.Headers.Add("X-SuperWall-Agent",_agentToken);using var response=await _http.SendAsync(request,ct);if(!response.IsSuccessStatusCode)Log($"History upload returned HTTP {(int)response.StatusCode}.");}
-    public override void Dispose(){_proxy?.Dispose();_local?.Dispose();_portableBrowsers?.Dispose();_appGuard?.Dispose();_http.Dispose();base.Dispose();}
+
+    private void SavePolicy()
+    {
+        try
+        {
+            var path = Path.Combine(_stateDir, "policy.json");
+            var temp = path + ".tmp";
+            File.WriteAllText(temp, JsonSerializer.Serialize(_policy, new JsonSerializerOptions { WriteIndented = true }));
+            File.Replace(temp, path, null, true);
+        }
+        catch (Exception ex) { AgentLogger.Error("Could not persist policy cache.", ex); }
+    }
+
+    private void ApplyPolicy()
+    {
+        if (_revoked) return;
+        var policyChanged = _lastAppliedPolicyVersion != _policy.Version;
+        BrowserPolicy.Apply(_policy);
+        if (_policy.UrlBlockingEnabled)
+        {
+            if (_proxy is null)
+            {
+                var candidate = new BlockProxy(host => PolicyRules.IsDomainBlocked(_policy, host));
+                try { candidate.Start(); _proxy = candidate; }
+                catch (Exception ex) { AgentLogger.Error("Could not start local blocking proxy.", ex); candidate.Dispose(); }
+            }
+        }
+        else
+        {
+            _proxy?.Dispose(); _proxy = null;
+        }
+        DownloadGuard.SetEnabled(_policy.DownloadsBlocked, _policy);
+        ApplyPortableBrowserPolicy();
+        ApplyAppPolicy();
+        _lastAppliedPolicyVersion = _policy.Version;
+        if (policyChanged) RestartManagedBrowsers();
+    }
+
+    private static void RestartManagedBrowsers()
+    {
+        foreach (var name in new[] { "msedge", "chrome", "brave", "vivaldi", "opera" })
+        {
+            try
+            {
+                foreach (var process in Process.GetProcessesByName(name))
+                {
+                    try
+                    {
+                        if (!WindowsUserScope.IsTargetUserProcess(process)) continue;
+                        if (!process.CloseMainWindow()) process.Kill(true);
+                        else if (!process.WaitForExit(3000)) process.Kill(true);
+                    }
+                    catch { }
+                    finally { process.Dispose(); }
+                }
+            }
+            catch { }
+        }
+    }
+
+    private async Task UploadHistory(string requestId, CancellationToken ct)
+    {
+        if (!_policy.SearchHistoryEnabled || string.IsNullOrWhiteSpace(_dashboard) || string.IsNullOrWhiteSpace(_agentToken) || string.IsNullOrWhiteSpace(requestId)) return;
+        var records = _history.Collect(_policy.SearchHistoryRetentionDays);
+        var upload = new HistoryUpload { DeviceId = _deviceId, RequestId = requestId, Records = records };
+        using var request = new HttpRequestMessage(HttpMethod.Post, $"{_dashboard.TrimEnd('/')}/api/agent/{Uri.EscapeDataString(_deviceId)}/history") { Content = JsonContent.Create(upload) };
+        request.Headers.Add("X-SuperWall-Agent", _agentToken);
+        using var response = await _http.SendAsync(request, ct);
+        if (!response.IsSuccessStatusCode) AgentLogger.Error($"History upload failed with HTTP {(int)response.StatusCode} ({response.ReasonPhrase}).");
+    }
+
+    private static string RedactUrl(string value)
+    {
+        try
+        {
+            if (!Uri.TryCreate(value, UriKind.Absolute, out var uri)) return "<invalid>";
+            return uri.GetLeftPart(UriPartial.Authority);
+        }
+        catch { return "<invalid>"; }
+    }
+
+    public override void Dispose()
+    {
+        _proxy?.Dispose();
+        _local?.Dispose();
+        _portableBrowsers?.Dispose();
+        _appGuard?.Dispose();
+        _http.Dispose();
+        base.Dispose();
+    }
 }
