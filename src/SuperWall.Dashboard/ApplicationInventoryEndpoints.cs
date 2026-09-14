@@ -49,7 +49,7 @@ public static class ApplicationInventoryEndpoints
                     Path = Truncate(x.Path, 4096)
                 })
                 .Where(x => !string.IsNullOrWhiteSpace(x.Name))
-                .GroupBy(x => new { x.Name, x.Version, x.Publisher, x.Path }, StringComparer.OrdinalIgnoreCase)
+                .GroupBy(x => string.Join("\u001F", x.Name, x.Version, x.Publisher, x.Path), StringComparer.OrdinalIgnoreCase)
                 .Select(g => g.First())
                 .ToList();
 
@@ -68,7 +68,7 @@ public static class ApplicationInventoryEndpoints
             using (var ins = c.CreateCommand())
             {
                 ins.Transaction = tx;
-                ins.CommandText = "INSERT INTO installed_apps(device_id,name,version,publisher,path,reported_utc) VALUES($d,$n,$v,$p,$x,$t)";
+                ins.CommandText = "INSERT OR REPLACE INTO installed_apps(device_id,name,version,publisher,path,reported_utc) VALUES($d,$n,$v,$p,$x,$t)";
                 foreach (var x in applications)
                 {
                     ins.Parameters.Clear();
@@ -98,7 +98,7 @@ public static class ApplicationInventoryEndpoints
     private static void EnsureTable(SqliteConnection c)
     {
         using var cmd = c.CreateCommand();
-        cmd.CommandText = "CREATE TABLE IF NOT EXISTS installed_apps(device_id TEXT NOT NULL,name TEXT NOT NULL,version TEXT,publisher TEXT,path TEXT,reported_utc TEXT NOT NULL,PRIMARY KEY(device_id,name,version,publisher,path));";
+        cmd.CommandText = "CREATE TABLE IF NOT EXISTS installed_apps(device_id TEXT NOT NULL,name TEXT NOT NULL,version TEXT,publisher TEXT,path TEXT,reported_utc TEXT NOT NULL,PRIMARY KEY(device_id,name,version,publisher));";
         cmd.ExecuteNonQuery();
     }
 
