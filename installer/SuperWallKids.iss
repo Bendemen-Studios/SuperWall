@@ -201,7 +201,7 @@ begin
       '"' + DashboardFile + '" /inheritance:r /grant:r "SYSTEM:(F)" "Administrators:(F)"');
   if FileExists(TargetUserFile) then
     RunHidden(ExpandConstant('{sysnative}\icacls.exe'),
-      '"' + TargetUserFile + '" /inheritance:r /grant:r "SYSTEM:(F) "Administrators:(F)"');
+      '"' + TargetUserFile + '" /inheritance:r /grant:r "SYSTEM:(F)" "Administrators:(F)"');
 
   RunHidden(ExpandConstant('{sysnative}\sc.exe'), 'stop SuperWallAgent');
   RunHidden(ExpandConstant('{sysnative}\sc.exe'), 'delete SuperWallAgent');
