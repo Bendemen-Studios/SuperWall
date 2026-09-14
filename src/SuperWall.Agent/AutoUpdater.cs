@@ -22,10 +22,14 @@ public sealed class AutoUpdater
         try
         {
             using var request = new HttpRequestMessage(HttpMethod.Get, ReleasesUrl);
-            request.Headers.UserAgent.ParseAdd("SuperWall-Kids-Updater/2.2");
+            request.Headers.UserAgent.ParseAdd("SuperWall-Kids-Updater/2.3");
             request.Headers.Accept.ParseAdd("application/vnd.github+json");
             using var response = await _http.SendAsync(request, ct);
-            if (!response.IsSuccessStatusCode) return;
+            if (!response.IsSuccessStatusCode)
+            {
+                AgentLogger.Error($"Update check failed with HTTP {(int)response.StatusCode} ({response.ReasonPhrase}).");
+                return;
+            }
 
             using var doc = JsonDocument.Parse(await response.Content.ReadAsStreamAsync(ct));
             JsonElement? selectedRelease = null;
@@ -38,7 +42,9 @@ public sealed class AutoUpdater
                 if (!TryGetVersion(tag, out var candidate)) continue;
                 if (latest is null || candidate > latest) { latest = candidate; selectedRelease = release; }
             }
-            if (selectedRelease is null || latest is null || latest <= GetCurrentVersion()) return;
+
+            var current = GetCurrentVersion();
+            if (selectedRelease is null || latest is null || latest <= current) return;
 
             JsonElement? agent = null;
             JsonElement? checksum = null;
@@ -48,39 +54,52 @@ public sealed class AutoUpdater
                 if (name.Equals(AgentAssetName, StringComparison.OrdinalIgnoreCase)) agent = asset;
                 if (name.Equals(AgentChecksumName, StringComparison.OrdinalIgnoreCase)) checksum = asset;
             }
-            if (agent is null) return;
+            if (agent is null || checksum is null)
+            {
+                AgentLogger.Error($"Release {latest} is missing the required agent or SHA256 asset; update skipped.");
+                return;
+            }
 
             Directory.CreateDirectory(_stateDir);
             var target = Environment.ProcessPath;
-            if (string.IsNullOrWhiteSpace(target) || !File.Exists(target)) return;
+            if (string.IsNullOrWhiteSpace(target) || !File.Exists(target))
+            {
+                AgentLogger.Error("Cannot determine the current agent executable path; update skipped.");
+                return;
+            }
 
             tempAgent = Path.Combine(_stateDir, $"SuperWall-Agent-{latest}.download");
             TryDelete(tempAgent);
             var downloadUrl = agent.Value.GetProperty("browser_download_url").GetString();
             if (string.IsNullOrWhiteSpace(downloadUrl)) return;
             await DownloadAsync(downloadUrl, tempAgent, ct);
-            if (!IsWindowsExecutable(tempAgent)) { TryDelete(tempAgent); return; }
-
-            if (checksum is not null)
+            if (!IsWindowsExecutable(tempAgent))
             {
-                var checksumUrl = checksum.Value.GetProperty("browser_download_url").GetString();
-                if (string.IsNullOrWhiteSpace(checksumUrl)) { TryDelete(tempAgent); return; }
-                var expected = (await DownloadTextAsync(checksumUrl, ct))
-                    .Split(new[] { ' ', '\t', '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries)
-                    .FirstOrDefault();
-                await using var hashStream = File.OpenRead(tempAgent);
-                var actual = Convert.ToHexString(await SHA256.HashDataAsync(hashStream, ct));
-                if (string.IsNullOrWhiteSpace(expected) || !actual.Equals(expected, StringComparison.OrdinalIgnoreCase))
-                {
-                    TryDelete(tempAgent);
-                    return;
-                }
+                AgentLogger.Error("Downloaded update failed the Windows executable header check.");
+                TryDelete(tempAgent);
+                return;
             }
 
-            // The agent cannot replace its own executable while it is running.
-            // Start an independent Windows command process that waits for the service
-            // to stop, replaces the executable, then starts the service again. This
-            // makes updates live without requiring a Windows reboot or user action.
+            var checksumUrl = checksum.Value.GetProperty("browser_download_url").GetString();
+            if (string.IsNullOrWhiteSpace(checksumUrl))
+            {
+                AgentLogger.Error("Release checksum asset has no download URL; update skipped.");
+                TryDelete(tempAgent);
+                return;
+            }
+
+            var expected = (await DownloadTextAsync(checksumUrl, ct))
+                .Split(new[] { ' ', '\t', '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries)
+                .FirstOrDefault();
+            await using var hashStream = File.OpenRead(tempAgent);
+            var actual = Convert.ToHexString(await SHA256.HashDataAsync(hashStream, ct));
+            if (string.IsNullOrWhiteSpace(expected) || !actual.Equals(expected, StringComparison.OrdinalIgnoreCase))
+            {
+                AgentLogger.Error($"SHA256 validation failed for agent update {latest}; update skipped.");
+                TryDelete(tempAgent);
+                return;
+            }
+
             helperScript = Path.Combine(_stateDir, $"SuperWall-Agent-{latest}.update.cmd");
             var script = BuildUpdateScript(tempAgent, target, helperScript);
             await File.WriteAllTextAsync(helperScript, script, ct);
@@ -98,14 +117,18 @@ public sealed class AutoUpdater
             {
                 TryDelete(tempAgent);
                 TryDelete(helperScript);
+                return;
             }
-            else
-            {
-                tempAgent = null;
-                helperScript = null;
-            }
+
+            AgentLogger.Info($"Staged verified agent update {current} -> {latest}.");
+            tempAgent = null;
+            helperScript = null;
         }
-        catch
+        catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }
+        catch (HttpRequestException ex) { AgentLogger.Error("Update network error.", ex); }
+        catch (JsonException ex) { AgentLogger.Error("Update release JSON error.", ex); }
+        catch (Exception ex) { AgentLogger.Error("Unexpected updater error.", ex); }
+        finally
         {
             if (!string.IsNullOrWhiteSpace(tempAgent)) TryDelete(tempAgent);
             if (!string.IsNullOrWhiteSpace(helperScript)) TryDelete(helperScript);
@@ -159,7 +182,7 @@ public sealed class AutoUpdater
     private async Task DownloadAsync(string url, string path, CancellationToken ct)
     {
         using var request = new HttpRequestMessage(HttpMethod.Get, url);
-        request.Headers.UserAgent.ParseAdd("SuperWall-Kids-Updater/2.2");
+        request.Headers.UserAgent.ParseAdd("SuperWall-Kids-Updater/2.3");
         using var response = await _http.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, ct);
         response.EnsureSuccessStatusCode();
         await using var input = await response.Content.ReadAsStreamAsync(ct);
@@ -170,7 +193,7 @@ public sealed class AutoUpdater
     private async Task<string> DownloadTextAsync(string url, CancellationToken ct)
     {
         using var request = new HttpRequestMessage(HttpMethod.Get, url);
-        request.Headers.UserAgent.ParseAdd("SuperWall-Kids-Updater/2.2");
+        request.Headers.UserAgent.ParseAdd("SuperWall-Kids-Updater/2.3");
         using var response = await _http.SendAsync(request, ct);
         response.EnsureSuccessStatusCode();
         return await response.Content.ReadAsStringAsync(ct);
