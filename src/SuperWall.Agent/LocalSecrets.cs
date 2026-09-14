@@ -27,12 +27,22 @@ public static class LocalSecrets
         {
             Directory.CreateDirectory(Root);
             HardenAcl(Root);
-            var clear = Encoding.UTF8.GetBytes(value);
+            var clear = Encoding.UTF8.GetBytes(value ?? string.Empty);
             var protectedBytes = ProtectedData.Protect(clear, Encoding.UTF8.GetBytes("SuperWall/v1/" + name), DataProtectionScope.LocalMachine);
             var path = Path.Combine(Root, name + ".bin");
-            File.WriteAllBytes(path, protectedBytes);
-            HardenAcl(path);
-            return true;
+            var temp = path + ".tmp-" + Guid.NewGuid().ToString("N");
+            try
+            {
+                File.WriteAllBytes(temp, protectedBytes);
+                HardenAcl(temp);
+                File.Move(temp, path, true);
+                HardenAcl(path);
+                return true;
+            }
+            finally
+            {
+                try { File.Delete(temp); } catch { }
+            }
         }
         catch { return false; }
     }
