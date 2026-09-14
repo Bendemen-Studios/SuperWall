@@ -44,6 +44,10 @@ jobs:
             throw "Version mismatch: installer=$installerVersion agent=$agentVersion"
           }
 
+          if ($env:GITHUB_REF -like 'refs/tags/kids-v*' -and $env:GITHUB_REF_NAME -ne "kids-v$installerVersion") {
+            throw "Tag/version mismatch: tag=$env:GITHUB_REF_NAME installer=$installerVersion"
+          }
+
           "INSTALLER_VERSION=$installerVersion" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
           Write-Host "SuperWall Kids version: $installerVersion"
 
@@ -136,7 +140,7 @@ jobs:
 
             - Silent installer for initial enrollment
             - Installerless agent self-update from the GitHub release asset
-            - Update is SHA256 verified and staged by Windows for the next restart
+            - Update is SHA256 verified and staged by Windows without requiring a reboot
             - Installed application inventory support
             - Existing browser, download, URL and app policy enforcement retained
             - Self-contained Windows x64 agent
