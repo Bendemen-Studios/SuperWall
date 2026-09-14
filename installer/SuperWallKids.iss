@@ -34,13 +34,11 @@ Name: "{commonappdata}\SuperWall"
 var
   DashboardPage: TInputQueryWizardPage;
   EnrollmentPage: TInputQueryWizardPage;
+  ExistingInstallation: Boolean;
 
 function IsUpgrade: Boolean;
 begin
-  Result := CompareText(ExpandConstant('{param:UPGRADE|}'), '1') = 0;
-  if not Result then
-    Result := FileExists(ExpandConstant('{autopf}\SuperWall Kids\{#MyExeName}')) or
-      FileExists(ExpandConstant('{commonappdata}\SuperWall\target-user.txt'));
+  Result := ExistingInstallation;
 end;
 
 function IsAlreadyEnrolled: Boolean;
@@ -63,6 +61,8 @@ end;
 
 procedure InitializeWizard;
 begin
+  ExistingInstallation := FileExists(ExpandConstant('{autopf}\SuperWall Kids\{#MyExeName}'));
+
   DashboardPage := CreateInputQueryPage(wpWelcome,
     'SuperWall Kids koppelen',
     'Centrale dashboard-server',
@@ -108,6 +108,7 @@ procedure CurStepChanged(CurStep: TSetupStep);
 var
   DashboardUrl, EnrollmentKey, AgentPath, EnrollmentFile, DashboardFile, TargetUserFile, CommonDir, TargetUser: string;
   WaitCount: Integer;
+  WriteOk: Boolean;
 begin
   if (CurStep = ssInstall) and IsUpgrade then
   begin
@@ -136,37 +137,28 @@ begin
     DashboardUrl := Trim(DashboardPage.Values[0]);
     EnrollmentKey := Trim(EnrollmentPage.Values[0]);
 
-    if not SaveStringToFile(DashboardFile, DashboardUrl, False) then
+    WriteOk := SaveStringToFile(DashboardFile, DashboardUrl, False);
+    if (not WriteOk) or (not FileExists(DashboardFile)) then
     begin
-      MsgBox('Het dashboardadres kon niet veilig worden opgeslagen. Installatie afgebroken.', mbError, MB_OK);
-      Abort;
+      MsgBox('SuperWall kon de dashboard URL niet opslaan. De installatie is afgebroken.', mbError, MB_OK);
+      Exit;
     end;
-    if not SaveStringToFile(EnrollmentFile, EnrollmentKey, False) then
+
+    WriteOk := SaveStringToFile(EnrollmentFile, EnrollmentKey, False);
+    if (not WriteOk) or (not FileExists(EnrollmentFile)) then
     begin
-      MsgBox('De enrollment key kon niet veilig worden opgeslagen. Installatie afgebroken.', mbError, MB_OK);
-      Abort;
-    end;
-    if not FileExists(EnrollmentFile) then
-    begin
-      MsgBox('De enrollment key ontbreekt na opslag. Installatie afgebroken.', mbError, MB_OK);
-      Abort;
+      MsgBox('SuperWall kon de enrollment key niet opslaan. De installatie is afgebroken.', mbError, MB_OK);
+      Exit;
     end;
 
     TargetUser := GetEnv('SUPERWALL_TARGET_USER');
     if Trim(TargetUser) = '' then
       TargetUser := ExpandConstant('{username}');
-    if not SaveStringToFile(TargetUserFile, TargetUser, False) or not FileExists(TargetUserFile) then
+    WriteOk := SaveStringToFile(TargetUserFile, TargetUser, False);
+    if (not WriteOk) or (not FileExists(TargetUserFile)) then
     begin
-      MsgBox('Het doelgebruikersaccount kon niet worden opgeslagen. Installatie afgebroken.', mbError, MB_OK);
-      Abort;
-    end;
-
-    if not RegWriteStringValue(HKEY_LOCAL_MACHINE,
-      'SYSTEM\CurrentControlSet\Control\Session Manager\Environment',
-      'SUPERWALL_DASHBOARD', DashboardUrl) then
-    begin
-      MsgBox('De dashboardconfiguratie kon niet in Windows worden opgeslagen.', mbError, MB_OK);
-      Abort;
+      MsgBox('SuperWall kon de doelgebruiker niet opslaan. De installatie is afgebroken.', mbError, MB_OK);
+      Exit;
     end;
   end
   else if not FileExists(TargetUserFile) then
@@ -174,7 +166,12 @@ begin
     TargetUser := GetEnv('SUPERWALL_TARGET_USER');
     if Trim(TargetUser) = '' then
       TargetUser := ExpandConstant('{username}');
-    SaveStringToFile(TargetUserFile, TargetUser, False);
+    WriteOk := SaveStringToFile(TargetUserFile, TargetUser, False);
+    if (not WriteOk) or (not FileExists(TargetUserFile)) then
+    begin
+      MsgBox('SuperWall kon de doelgebruiker niet opslaan. De installatie is afgebroken.', mbError, MB_OK);
+      Exit;
+    end;
   end;
 
   RunHidden(ExpandConstant('{sysnative}\reg.exe'), 'delete "HKLM\SOFTWARE\Policies\Microsoft\Edge" /v ProxyMode /f');
@@ -204,7 +201,7 @@ begin
       '"' + DashboardFile + '" /inheritance:r /grant:r "SYSTEM:(F)" "Administrators:(F)"');
   if FileExists(TargetUserFile) then
     RunHidden(ExpandConstant('{sysnative}\icacls.exe'),
-      '"' + TargetUserFile + '" /inheritance:r /grant:r "SYSTEM:(F)" "Administrators:(F)"');
+      '"' + TargetUserFile + '" /inheritance:r /grant:r "SYSTEM:(F) "Administrators:(F)"');
 
   RunHidden(ExpandConstant('{sysnative}\sc.exe'), 'stop SuperWallAgent');
   RunHidden(ExpandConstant('{sysnative}\sc.exe'), 'delete SuperWallAgent');
