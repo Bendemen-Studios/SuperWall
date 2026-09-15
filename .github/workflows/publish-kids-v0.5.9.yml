@@ -1,0 +1,109 @@
+name: Publish SuperWall Kids 0.5.9
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - '.release-kids-v0.5.9.trigger'
+
+permissions:
+  contents: write
+
+jobs:
+  publish:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+
+      - name: Validate version
+        shell: pwsh
+        run: |
+          $installer = Get-Content -Raw installer/SuperWallKids.iss
+          $im = [regex]::Match($installer, '#define\s+MyAppVersion\s+"([^"]+)"')
+          if (!$im.Success -or $im.Groups[1].Value -ne '0.5.9') { throw 'Installer version is not 0.5.9.' }
+          $agent = Get-Content -Raw src/SuperWall.Agent/SuperWall.Agent.csproj
+          $am = [regex]::Match($agent, '<Version>([^<]+)</Version>')
+          if (!$am.Success -or $am.Groups[1].Value.Trim() -ne '0.5.9') { throw 'Agent version is not 0.5.9.' }
+
+      - name: Restore
+        run: dotnet restore src/SuperWall.Agent/SuperWall.Agent.csproj
+
+      - name: Publish SuperWall Kids agent
+        run: dotnet publish src/SuperWall.Agent/SuperWall.Agent.csproj -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -o publish/agent
+
+      - name: Install Inno Setup 7
+        shell: pwsh
+        run: winget install --id JRSoftware.InnoSetup.7 -e --silent --accept-source-agreements --accept-package-agreements --source winget
+
+      - name: Build installer
+        shell: pwsh
+        run: |
+          $iscc = @("$env:ProgramFiles\Inno Setup 7\ISCC.exe", "${env:ProgramFiles(x86)}\Inno Setup 7\ISCC.exe", "$env:LOCALAPPDATA\Programs\Inno Setup 7\ISCC.exe") | Where-Object { Test-Path $_ } | Select-Object -First 1
+          if (!$iscc) { throw 'ISCC.exe not found.' }
+          New-Item -ItemType Directory -Force publish/installer/inner | Out-Null
+          & $iscc installer/SuperWallKids.iss
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $inner = Get-ChildItem publish/installer -Filter 'SuperWall-Kids-Setup-0.5.9.exe' -File | Select-Object -First 1
+          if (!$inner) { throw 'Inner installer was not created.' }
+          Move-Item $inner.FullName publish/installer/inner/SuperWall-Kids-Inner.exe -Force
+
+      - name: Build bootstrapper
+        shell: pwsh
+        run: |
+          dotnet publish installer/Bootstrapper/SuperWallInstallerBootstrapper.csproj -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -o publish/installer/bootstrapper
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $bootstrapper = Get-ChildItem publish/installer/bootstrapper -Filter '*.exe' -File | Select-Object -First 1
+          if (!$bootstrapper) { throw 'Bootstrapper executable was not created.' }
+          Copy-Item $bootstrapper.FullName publish/installer/SuperWall-Kids-Setup-0.5.9.exe -Force
+
+      - name: Prepare release assets
+        shell: pwsh
+        run: |
+          $installer = 'publish/installer/SuperWall-Kids-Setup-0.5.9.exe'
+          $bytes = [IO.File]::ReadAllBytes($installer)
+          if ($bytes.Length -lt 2 -or $bytes[0] -ne 0x4D -or $bytes[1] -ne 0x5A) { throw 'Installer is not a valid Windows executable.' }
+          (Get-FileHash $installer -Algorithm SHA256).Hash | Out-File publish/installer/SHA256.txt
+          (Get-FileHash publish/agent/SuperWall.Agent.exe -Algorithm SHA256).Hash | Out-File publish/installer/SHA256-Agent.txt
+          Copy-Item publish/agent/SuperWall.Agent.exe publish/installer/SuperWall-Agent-win-x64.exe -Force
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: SuperWall-Kids-Installer-0.5.9
+          path: |
+            publish/installer/SuperWall-Kids-Setup-0.5.9.exe
+            publish/installer/SHA256.txt
+            publish/installer/SuperWall-Agent-win-x64.exe
+            publish/installer/SHA256-Agent.txt
+
+      - name: Publish GitHub release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: kids-v0.5.9
+          target_commitish: main
+          files: |
+            publish/installer/SuperWall-Kids-Setup-0.5.9.exe
+            publish/installer/SHA256.txt
+            publish/installer/SuperWall-Agent-win-x64.exe
+            publish/installer/SHA256-Agent.txt
+          body: |
+            ## SuperWall Kids 0.5.9
+
+            Windows client for SuperWall.
+
+            - Reliable original Windows-user capture before UAC elevation
+            - Silent installer for initial enrollment
+            - Installerless agent self-update from the GitHub release asset
+            - SHA256 verified updates
+            - Current-user-only browser policy reset on uninstall
+            - Self-contained Windows x64 agent
+          generate_release_notes: false
+          draft: false
+          prerelease: false
