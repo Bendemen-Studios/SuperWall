@@ -52,13 +52,14 @@ internal static class Program
                 stream.CopyTo(output);
             }
 
-            // This bootstrapper is explicitly non-elevated. WindowsIdentity therefore
+            // This bootstrapper is explicitly non-elevated. WindowsIdentity normally
             // identifies the user who launched the installer, before the inner Inno
-            // Setup process requests administrator elevation. Prefer this over WTS
-            // session discovery so the original child account survives UAC reliably.
+            // Setup process requests UAC elevation. Never pass an administrator as
+            // the parental-control target; when launched from an admin context, use
+            // the active console account only when that account is non-admin.
             var targetUser = GetOriginalWindowsUser();
             if (string.IsNullOrWhiteSpace(targetUser))
-                throw new InvalidOperationException("SuperWall kon de oorspronkelijke Windows-gebruiker niet bepalen. Start de Kids installer vanuit het kindaccount.");
+                throw new InvalidOperationException("SuperWall kon geen veilige niet-beheerders Windows-gebruiker bepalen. Start de Kids installer vanuit het kindaccount.");
 
             var psi = new ProcessStartInfo
             {
@@ -118,17 +119,20 @@ internal static class Program
 
     private static string? GetOriginalWindowsUser()
     {
+        // The bootstrapper runs asInvoker, so a normal child account remains
+        // identifiable before UAC. If it is already running in an administrator
+        // context, do not use that identity as the target.
         try
         {
             var identity = WindowsIdentity.GetCurrent();
             var name = identity.Name?.Trim();
-            if (!string.IsNullOrWhiteSpace(name))
+            if (!string.IsNullOrWhiteSpace(name) && !IsAdministrator(identity))
                 return name;
         }
         catch { }
 
-        // Fallback for unusual launch contexts where the process identity is not
-        // available; this still resolves the interactive console account.
+        // Fallback for unusual launch contexts, and for an installer started from
+        // an administrator context while a non-admin child account is interactive.
         try
         {
             var sessionId = WTSGetActiveConsoleSessionId();
@@ -144,7 +148,7 @@ internal static class Program
             try
             {
                 var user = Marshal.PtrToStringUni(buffer)?.Trim();
-                return string.IsNullOrWhiteSpace(user) ? null : user;
+                return IsSafeTargetUser(user) ? user : null;
             }
             finally
             {
@@ -152,6 +156,45 @@ internal static class Program
             }
         }
         catch { return null; }
+    }
+
+    private static bool IsAdministrator(WindowsIdentity identity)
+    {
+        try
+        {
+            var principal = new WindowsPrincipal(identity);
+            return principal.IsInRole(WindowsBuiltInRole.Administrator);
+        }
+        catch { return true; }
+    }
+
+    private static bool IsSafeTargetUser(string? user)
+    {
+        if (string.IsNullOrWhiteSpace(user)) return false;
+        try
+        {
+            var account = user.Contains('\\', StringComparison.Ordinal)
+                ? user
+                : $"{Environment.MachineName}\\{user}";
+            var sid = (SecurityIdentifier)new NTAccount(account).Translate(typeof(SecurityIdentifier));
+            var administratorsSid = new SecurityIdentifier(WellKnownSidType.BuiltinAdministratorsSid, null);
+            return !IsMemberOfAdministrators(sid, administratorsSid);
+        }
+        catch { return false; }
+    }
+
+    private static bool IsMemberOfAdministrators(SecurityIdentifier userSid, SecurityIdentifier administratorsSid)
+    {
+        try
+        {
+            using var identity = new WindowsIdentity(userSid.Value);
+            return new WindowsPrincipal(identity).IsInRole(administratorsSid);
+        }
+        catch
+        {
+            // A failed administrator check must never turn into an unsafe target.
+            return true;
+        }
     }
 
     private static string QuoteArgument(string value)
