@@ -1,5 +1,5 @@
 #define MyAppName "SuperWall Kids"
-#define MyAppVersion "0.5.8"
+#define MyAppVersion "0.5.9"
 #define MyPublisher "Bendemen Studios"
 #define MyExeName "SuperWall.Agent.exe"
 #define ServiceSddl "D:(A;;CCLCSWRPWPDTLOCRRC;;;SY)(A;;CCDCLCSWRPWPDTLOCRSDRCWDWO;;;BA)(A;;CCLCRP;;;AU)"
@@ -151,9 +151,6 @@ begin
       Exit;
     end;
 
-    // This value is supplied by the non-elevated bootstrapper. Do not use
-    // {username} as the primary source because Inno Setup is elevated here and
-    // {username} can therefore be the administrator who approved UAC.
     TargetUser := GetEnv('SUPERWALL_TARGET_USER');
     if Trim(TargetUser) = '' then
     begin
