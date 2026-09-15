@@ -23,7 +23,33 @@ internal static class Program
     [DllImport("kernel32.dll")]
     private static extern uint WTSGetActiveConsoleSessionId();
 
+    [DllImport("Netapi32.dll", CharSet = CharSet.Unicode)]
+    private static extern int NetLocalGroupGetMembers(
+        string? serverName,
+        string localGroupName,
+        int level,
+        out IntPtr buffer,
+        int prefMaxLen,
+        out int entriesRead,
+        out int totalEntries,
+        ref IntPtr resumeHandle);
+
+    [DllImport("Netapi32.dll")]
+    private static extern int NetApiBufferFree(IntPtr buffer);
+
     private const int WtsUserName = 5;
+    private const int ErrorSuccess = 0;
+    private const int NetApiStatusMoreData = 234;
+    private const int MaxPreferredLength = -1;
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct LocalGroupMembersInfo2
+    {
+        public IntPtr Name;
+        public int Usage;
+        public IntPtr Sid;
+        public IntPtr Comment;
+    }
 
     [STAThread]
     private static int Main(string[] args)
@@ -171,30 +197,71 @@ internal static class Program
     private static bool IsSafeTargetUser(string? user)
     {
         if (string.IsNullOrWhiteSpace(user)) return false;
+
         try
         {
-            var account = user.Contains('\\', StringComparison.Ordinal)
+            var accountName = user.Contains('\\', StringComparison.Ordinal)
                 ? user
                 : $"{Environment.MachineName}\\{user}";
-            var sid = (SecurityIdentifier)new NTAccount(account).Translate(typeof(SecurityIdentifier));
+            var sid = (SecurityIdentifier)new NTAccount(accountName).Translate(typeof(SecurityIdentifier));
             var administratorsSid = new SecurityIdentifier(WellKnownSidType.BuiltinAdministratorsSid, null);
-            return !IsMemberOfAdministrators(sid, administratorsSid);
-        }
-        catch { return false; }
-    }
-
-    private static bool IsMemberOfAdministrators(SecurityIdentifier userSid, SecurityIdentifier administratorsSid)
-    {
-        try
-        {
-            using var identity = new WindowsIdentity(userSid.Value);
-            return new WindowsPrincipal(identity).IsInRole(administratorsSid);
+            return !IsMemberOfLocalAdministrators(sid, administratorsSid);
         }
         catch
         {
-            // A failed administrator check must never turn into an unsafe target.
+            return false;
+        }
+    }
+
+    private static bool IsMemberOfLocalAdministrators(SecurityIdentifier userSid, SecurityIdentifier administratorsSid)
+    {
+        try
+        {
+            var account = (NTAccount)administratorsSid.Translate(typeof(NTAccount));
+            var groupName = account.Value[(account.Value.LastIndexOf('\\') + 1)..];
+            IntPtr resume = IntPtr.Zero;
+
+            do
+            {
+                var status = NetLocalGroupGetMembers(
+                    null,
+                    groupName,
+                    2,
+                    out var buffer,
+                    MaxPreferredLength,
+                    out var entriesRead,
+                    out _,
+                    ref resume);
+
+                if (status != ErrorSuccess && status != NetApiStatusMoreData)
+                    return true;
+
+                try
+                {
+                    var size = Marshal.SizeOf<LocalGroupMembersInfo2>();
+                    for (var i = 0; i < entriesRead; i++)
+                    {
+                        var item = Marshal.PtrToStructure<LocalGroupMembersInfo2>(buffer + i * size);
+                        if (item.Sid == IntPtr.Zero) continue;
+                        if (new SecurityIdentifier(item.Sid).Equals(userSid)) return true;
+                    }
+                }
+                finally
+                {
+                    if (buffer != IntPtr.Zero) NetApiBufferFree(buffer);
+                }
+
+                if (status != NetApiStatusMoreData)
+                    break;
+            }
+            while (true);
+        }
+        catch
+        {
             return true;
         }
+
+        return false;
     }
 
     private static string QuoteArgument(string value)
