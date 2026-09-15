@@ -3,6 +3,7 @@
 using System.Diagnostics;
 using System.Reflection;
 using System.Runtime.InteropServices;
+using System.Security.Principal;
 
 internal static class Program
 {
@@ -38,8 +39,6 @@ internal static class Program
             var safeTemp = Path.Combine(root, "Temp");
             Directory.CreateDirectory(safeTemp);
 
-            // Never overwrite a shared inner-installer executable. A running previous
-            // installer can still hold a handle on it during an upgrade.
             runDirectory = Path.Combine(root, "run-" + Guid.NewGuid().ToString("N"));
             Directory.CreateDirectory(runDirectory);
             var innerPath = Path.Combine(runDirectory, InnerResourceName);
@@ -53,7 +52,13 @@ internal static class Program
                 stream.CopyTo(output);
             }
 
-            var targetUser = GetInteractiveUser();
+            // This bootstrapper is explicitly non-elevated. WindowsIdentity therefore
+            // identifies the user who launched the installer, before the inner Inno
+            // Setup process requests administrator elevation. Prefer this over WTS
+            // session discovery so the original child account survives UAC reliably.
+            var targetUser = GetOriginalWindowsUser();
+            if (string.IsNullOrWhiteSpace(targetUser))
+                throw new InvalidOperationException("SuperWall kon de oorspronkelijke Windows-gebruiker niet bepalen. Start de Kids installer vanuit het kindaccount.");
 
             var psi = new ProcessStartInfo
             {
@@ -65,8 +70,7 @@ internal static class Program
 
             psi.Environment["TEMP"] = safeTemp;
             psi.Environment["TMP"] = safeTemp;
-            if (!string.IsNullOrWhiteSpace(targetUser))
-                psi.Environment["SUPERWALL_TARGET_USER"] = targetUser;
+            psi.Environment["SUPERWALL_TARGET_USER"] = targetUser;
 
             using var process = Process.Start(psi)
                 ?? throw new InvalidOperationException("SuperWall installer kon niet worden gestart.");
@@ -112,8 +116,19 @@ internal static class Program
         catch { }
     }
 
-    private static string? GetInteractiveUser()
+    private static string? GetOriginalWindowsUser()
     {
+        try
+        {
+            var identity = WindowsIdentity.GetCurrent();
+            var name = identity.Name?.Trim();
+            if (!string.IsNullOrWhiteSpace(name))
+                return name;
+        }
+        catch { }
+
+        // Fallback for unusual launch contexts where the process identity is not
+        // available; this still resolves the interactive console account.
         try
         {
             var sessionId = WTSGetActiveConsoleSessionId();
