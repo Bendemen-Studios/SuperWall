@@ -4,13 +4,14 @@ on:
   push:
     branches:
       - main
+    paths:
+      - '.release-kids-v0.5.8.trigger'
 
 permissions:
   contents: write
 
 jobs:
   publish:
-    if: github.event.head_commit.message == 'release: publish SuperWall Kids 0.5.8'
     runs-on: windows-latest
     steps:
       - name: Checkout
