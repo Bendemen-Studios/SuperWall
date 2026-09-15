@@ -8,9 +8,8 @@ namespace SuperWall.Agent;
 /// <summary>
 /// Resolves the Windows account whose browser/app policy should be enforced.
 /// The agent runs as LocalSystem, so HKCU is the service account rather than the
-/// child. The installer records the intended interactive account before UAC.
-/// If an elevated installer accidentally records an administrator, we repair
-/// that state by selecting the active non-administrator console user instead.
+/// child. The bootstrapper captures the interactive child account before UAC.
+/// An administrator account is never accepted as the parental-control target.
 /// </summary>
 public static class WindowsUserScope
 {
@@ -91,15 +90,17 @@ public static class WindowsUserScope
             var path = Path.Combine(StateDir, TargetUserFile);
             var configured = File.Exists(path) ? File.ReadAllText(path).Trim() : null;
 
-            // UAC can change the identity seen by an elevated installer. Never
-            // allow an administrator to become the child policy target when a
-            // non-admin user is actively logged on at the console.
+            // The bootstrapper captures the child before UAC. Trust it only after
+            // validating that the account really exists and is not an administrator.
             if (!string.IsNullOrWhiteSpace(configured) && !IsLocalAdministrator(configured))
             {
                 _resolvedTargetUser = configured;
                 return configured;
             }
 
+            // If an old installation contains an administrator target, repair it
+            // only to an actually non-admin interactive user. Never fall back to
+            // the administrator value: that was the original parental-control bug.
             var active = ActiveConsoleUserName();
             if (!string.IsNullOrWhiteSpace(active) && !IsLocalAdministrator(active))
             {
@@ -108,23 +109,18 @@ public static class WindowsUserScope
                 return active;
             }
 
-            // Keep an explicitly configured account as a last resort when no
-            // safe non-admin console account can currently be resolved. This is
-            // important for machines where the child is not logged in yet.
-            if (!string.IsNullOrWhiteSpace(configured))
-            {
-                _resolvedTargetUser = configured;
-                return configured;
-            }
+            // No safe target exists right now. Returning null disables user-scoped
+            // policy instead of accidentally applying the child's policy to a parent.
+            return null;
         }
-        catch { }
-
-        return null;
+        catch
+        {
+            return null;
+        }
     }
 
     public static SecurityIdentifier? TargetSid() => TranslateToSid(TargetUserName());
 
-    /// <summary>Returns true only when the process is running as the configured target account.</summary>
     public static bool IsTargetUserProcess(Process process)
     {
         var targetSid = TargetSid();
@@ -170,9 +166,7 @@ public static class WindowsUserScope
     public static string? ResolveInstallTargetUser()
     {
         var active = ActiveConsoleUserName();
-        if (!string.IsNullOrWhiteSpace(active) && !IsLocalAdministrator(active))
-            return active;
-        return null;
+        return !string.IsNullOrWhiteSpace(active) && !IsLocalAdministrator(active) ? active : null;
     }
 
     public static RegistryKey? OpenUserPolicyKey(string relativePath, bool writable)
@@ -183,9 +177,7 @@ public static class WindowsUserScope
         {
             EnsureTargetHiveLoaded(sid);
             var fullPath = $"{sid.Value}\\{relativePath}";
-            return writable
-                ? Registry.Users.CreateSubKey(fullPath, true)
-                : Registry.Users.OpenSubKey(fullPath, writable);
+            return writable ? Registry.Users.CreateSubKey(fullPath, true) : Registry.Users.OpenSubKey(fullPath, writable);
         }
         catch { return null; }
     }
@@ -208,8 +200,7 @@ public static class WindowsUserScope
             if (user.Contains('\\', StringComparison.Ordinal))
                 return (SecurityIdentifier)new NTAccount(user).Translate(typeof(SecurityIdentifier));
 
-            var local = $"{Environment.MachineName}\\{user}";
-            return (SecurityIdentifier)new NTAccount(local).Translate(typeof(SecurityIdentifier));
+            return (SecurityIdentifier)new NTAccount($"{Environment.MachineName}\\{user}").Translate(typeof(SecurityIdentifier));
         }
         catch
         {
@@ -235,13 +226,8 @@ public static class WindowsUserScope
 
             do
             {
-                var status = NetLocalGroupGetMembers(
-                    null, groupName, 2, out var buffer, MaxPreferredLength,
-                    out var entriesRead, out _, ref resume);
-
-                if (status != ErrorSuccess && status != NetApiStatusMoreData)
-                    return false;
-
+                var status = NetLocalGroupGetMembers(null, groupName, 2, out var buffer, MaxPreferredLength, out var entriesRead, out _, ref resume);
+                if (status != ErrorSuccess && status != NetApiStatusMoreData) return false;
                 try
                 {
                     var size = Marshal.SizeOf<LocalGroupMembersInfo2>();
@@ -249,20 +235,17 @@ public static class WindowsUserScope
                     {
                         var item = Marshal.PtrToStructure<LocalGroupMembersInfo2>(buffer + i * size);
                         if (item.Sid == IntPtr.Zero) continue;
-                        var memberSid = new SecurityIdentifier(item.Sid);
-                        if (memberSid.Equals(sid)) return true;
+                        if (new SecurityIdentifier(item.Sid).Equals(sid)) return true;
                     }
                 }
                 finally
                 {
                     if (buffer != IntPtr.Zero) NetApiBufferFree(buffer);
                 }
-
                 if (status != NetApiStatusMoreData) break;
             } while (true);
         }
         catch { }
-
         return false;
     }
 
@@ -304,8 +287,8 @@ public static class WindowsUserScope
         var hiveFile = Path.Combine(profile, "NTUSER.DAT");
         if (!File.Exists(hiveFile)) return;
 
-        var result = RegLoadKey(new IntPtr(HKeyUsers), sidText, hiveFile);
-        if (result == ErrorSuccess) _loadedByUs = true;
+        if (RegLoadKey(new IntPtr(HKeyUsers), sidText, hiveFile) == ErrorSuccess)
+            _loadedByUs = true;
     }
 
     public static string? ProfilePath()
@@ -318,8 +301,7 @@ public static class WindowsUserScope
     {
         try
         {
-            using var key = Registry.LocalMachine.OpenSubKey(
-                $@"SOFTWARE\Microsoft\Windows NT\CurrentVersion\ProfileList\{sid.Value}");
+            using var key = Registry.LocalMachine.OpenSubKey($@"SOFTWARE\Microsoft\Windows NT\CurrentVersion\ProfileList\{sid.Value}");
             var path = key?.GetValue("ProfileImagePath") as string;
             return string.IsNullOrWhiteSpace(path) ? null : Environment.ExpandEnvironmentVariables(path);
         }
