@@ -1,12 +1,12 @@
 using Microsoft.Win32;
 using System.Diagnostics;
-using System.Runtime.InteropServices;
 using System.Security.Principal;
 
 namespace SuperWall.Agent;
 
 /// <summary>
-/// Removes SuperWall enforcement without removing unrelated Chrome/Edge policy.
+/// Removes SuperWall enforcement for the current Windows user without touching
+/// browser policy belonging to other users or machine-wide policy.
 /// Must be invoked from an elevated administrator process.
 /// </summary>
 public static class SuperWallUninstaller
@@ -23,28 +23,7 @@ public static class SuperWallUninstaller
         @"SOFTWARE\Policies\Opera Software\Opera Stable"
     };
 
-    private static readonly string[] SuperWallPolicyValues =
-    {
-        "ProxyMode", "ProxyServer", "DnsOverHttpsMode", "QuicAllowed",
-        "BackgroundModeEnabled", "ExtensionInstallBlocklist", "ProxyBypassList",
-        "DownloadRestrictions"
-    };
-
     private const string ServiceName = "SuperWallAgent";
-    private const int HKeyUsers = unchecked((int)0x80000003);
-
-    [StructLayout(LayoutKind.Sequential)]
-    private struct Luid
-    {
-        public uint LowPart;
-        public int HighPart;
-    }
-
-    [DllImport("advapi32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
-    private static extern int RegLoadKey(IntPtr hKey, string lpSubKey, string lpFile);
-
-    [DllImport("advapi32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
-    private static extern int RegUnLoadKey(IntPtr hKey, string lpSubKey);
 
     public static int Run()
     {
@@ -54,7 +33,7 @@ public static class SuperWallUninstaller
         try
         {
             StopAndDeleteService();
-            ClearAllBrowserPolicies();
+            ResetCurrentUserBrowserPolicies();
             RemoveSuperWallScheduledTasks();
             RunGpUpdate();
             ScheduleSelfDelete();
@@ -84,119 +63,33 @@ public static class SuperWallUninstaller
         RunProcess("sc.exe", $"delete {ServiceName}", 10000);
     }
 
-    private static void ClearAllBrowserPolicies()
+    private static void ResetCurrentUserBrowserPolicies()
     {
-        foreach (var view in new[] { RegistryView.Registry64, RegistryView.Registry32 })
-        {
-            using var machine = RegistryKey.OpenBaseKey(RegistryHive.LocalMachine, view);
-            foreach (var path in ChromiumPolicyPaths)
-                ClearPolicyKey(machine, path);
-        }
-
-        // Clean the administrator's current user hive too.
+        // Complete reset for the CURRENT USER only. Delete the browser policy roots
+        // from HKCU so every SuperWall policy/value/subkey is removed, while leaving
+        // other users and machine-wide (HKLM) policy completely untouched.
         foreach (var path in ChromiumPolicyPaths)
-            ClearPolicyKey(Registry.CurrentUser, path);
-
-        // The service targets a child account, but an older SuperWall version may
-        // have written policy to the wrong/admin account. Clean every local profile
-        // hive so uninstall reliably removes that stale enforcement everywhere.
-        foreach (var sid in FindLocalProfileSids())
-            ClearUserHive(sid);
-    }
-
-    private static void ClearPolicyKey(RegistryKey root, string path)
-    {
-        try
         {
-            using var key = root.OpenSubKey(path, writable: true);
-            if (key is null) return;
-
-            foreach (var value in SuperWallPolicyValues)
+            try
             {
-                try { key.DeleteValue(value, throwOnMissingValue: false); } catch { }
+                Registry.CurrentUser.DeleteSubKeyTree(path, throwOnMissingSubKey: false);
             }
-
-            try { key.DeleteSubKeyTree("URLBlocklist", throwOnMissingSubKey: false); } catch { }
-        }
-        catch { }
-    }
-
-    private static IEnumerable<string> FindLocalProfileSids()
-    {
-        var result = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        try
-        {
-            using var profileList = Registry.LocalMachine.OpenSubKey(
-                @"SOFTWARE\Microsoft\Windows NT\CurrentVersion\ProfileList");
-            if (profileList is null) return result;
-
-            foreach (var sid in profileList.GetSubKeyNames())
+            catch (Exception ex)
             {
-                if (!sid.StartsWith("S-1-5-21-", StringComparison.OrdinalIgnoreCase)) continue;
-                try
-                {
-                    var identity = new SecurityIdentifier(sid);
-                    result.Add(identity.Value);
-                }
-                catch { }
+                AgentLogger.Error($"Could not reset current-user browser policy: {path}", ex);
             }
         }
-        catch { }
-        return result;
-    }
-
-    private static void ClearUserHive(string sid)
-    {
-        var loadedByUs = false;
-        try
-        {
-            using (Registry.Users.OpenSubKey(sid)) { }
-            if (Registry.Users.OpenSubKey(sid) is null)
-            {
-                var profile = GetProfilePath(sid);
-                var hiveFile = string.IsNullOrWhiteSpace(profile) ? null : Path.Combine(profile, "NTUSER.DAT");
-                if (!string.IsNullOrWhiteSpace(hiveFile) && File.Exists(hiveFile))
-                    loadedByUs = RegLoadKey(new IntPtr(HKeyUsers), sid, hiveFile) == 0;
-            }
-
-            using var hive = Registry.Users.OpenSubKey(sid, writable: true);
-            if (hive is null) return;
-            foreach (var path in ChromiumPolicyPaths)
-                ClearPolicyKey(hive, path);
-        }
-        catch { }
-        finally
-        {
-            if (loadedByUs)
-            {
-                try { RegUnLoadKey(new IntPtr(HKeyUsers), sid); } catch { }
-            }
-        }
-    }
-
-    private static string? GetProfilePath(string sid)
-    {
-        try
-        {
-            using var key = Registry.LocalMachine.OpenSubKey(
-                $@"SOFTWARE\Microsoft\Windows NT\CurrentVersion\ProfileList\{sid}");
-            var path = key?.GetValue("ProfileImagePath") as string;
-            return string.IsNullOrWhiteSpace(path) ? null : Environment.ExpandEnvironmentVariables(path);
-        }
-        catch { return null; }
     }
 
     private static void RemoveSuperWallScheduledTasks()
     {
-        // Safe even when the task does not exist. This covers older development builds
-        // that may have registered an updater task under either of these names.
         foreach (var task in new[] { "SuperWall", "SuperWallUpdater", "SuperWall Agent" })
             RunProcess("schtasks.exe", $"/Delete /TN \"{task}\" /F", 5000);
     }
 
     private static void RunGpUpdate()
     {
-        RunProcess("gpupdate.exe", "/target:computer /force", 30000);
+        // User policy refresh only: do not alter or refresh machine policy.
         RunProcess("gpupdate.exe", "/target:user /force", 30000);
     }
 
@@ -207,6 +100,8 @@ public static class SuperWallUninstaller
 
         var tempScript = Path.Combine(Path.GetTempPath(), $"superwall-uninstall-{Guid.NewGuid():N}.cmd");
         var appDir = Path.GetDirectoryName(exe);
+        if (string.IsNullOrWhiteSpace(appDir)) return;
+
         var lines = new List<string>
         {
             "@echo off",
