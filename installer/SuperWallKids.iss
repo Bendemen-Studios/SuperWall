@@ -1,5 +1,5 @@
 #define MyAppName "SuperWall Kids"
-#define MyAppVersion "0.5.6"
+#define MyAppVersion "0.5.7"
 #define MyPublisher "Bendemen Studios"
 #define MyExeName "SuperWall.Agent.exe"
 #define ServiceSddl "D:(A;;CCLCSWRPWPDTLOCRRC;;;SY)(A;;CCDCLCSWRPWPDTLOCRSDRCWDWO;;;BA)(A;;CCLCRP;;;AU)"
@@ -151,9 +151,16 @@ begin
       Exit;
     end;
 
+    // This value is supplied by the non-elevated bootstrapper. Do not use
+    // {username} as the primary source because Inno Setup is elevated here and
+    // {username} can therefore be the administrator who approved UAC.
     TargetUser := GetEnv('SUPERWALL_TARGET_USER');
     if Trim(TargetUser) = '' then
-      TargetUser := ExpandConstant('{username}');
+    begin
+      MsgBox('SuperWall kon de oorspronkelijke Windows-gebruiker niet bepalen. Start de Kids installer vanuit het kindaccount.', mbError, MB_OK);
+      Exit;
+    end;
+
     WriteOk := SaveStringToFile(TargetUserFile, TargetUser, False);
     if (not WriteOk) or (not FileExists(TargetUserFile)) then
     begin
@@ -165,7 +172,10 @@ begin
   begin
     TargetUser := GetEnv('SUPERWALL_TARGET_USER');
     if Trim(TargetUser) = '' then
-      TargetUser := ExpandConstant('{username}');
+    begin
+      MsgBox('SuperWall kan de bestaande installatie niet veilig koppelen zonder de oorspronkelijke Windows-gebruiker.', mbError, MB_OK);
+      Exit;
+    end;
     WriteOk := SaveStringToFile(TargetUserFile, TargetUser, False);
     if (not WriteOk) or (not FileExists(TargetUserFile)) then
     begin
@@ -194,14 +204,11 @@ begin
   RunHidden(ExpandConstant('{sysnative}\icacls.exe'),
     '"' + CommonDir + '" /inheritance:r /grant:r "SYSTEM:(OI)(CI)(F)" "Administrators:(OI)(CI)(F)" "Users:(OI)(CI)(RX)" /deny "Users:(OI)(CI)(W,DC,WDAC,WEA)"');
   if FileExists(EnrollmentFile) then
-    RunHidden(ExpandConstant('{sysnative}\icacls.exe'),
-      '"' + EnrollmentFile + '" /inheritance:r /grant:r "SYSTEM:(F)" "Administrators:(F)"');
+    RunHidden(ExpandConstant('{sysnative}\icacls.exe'), '"' + EnrollmentFile + '" /inheritance:r /grant:r "SYSTEM:(F)" "Administrators:(F)"');
   if FileExists(DashboardFile) then
-    RunHidden(ExpandConstant('{sysnative}\icacls.exe'),
-      '"' + DashboardFile + '" /inheritance:r /grant:r "SYSTEM:(F)" "Administrators:(F)"');
+    RunHidden(ExpandConstant('{sysnative}\icacls.exe'), '"' + DashboardFile + '" /inheritance:r /grant:r "SYSTEM:(F)" "Administrators:(F)"');
   if FileExists(TargetUserFile) then
-    RunHidden(ExpandConstant('{sysnative}\icacls.exe'),
-      '"' + TargetUserFile + '" /inheritance:r /grant:r "SYSTEM:(F)" "Administrators:(F)"');
+    RunHidden(ExpandConstant('{sysnative}\icacls.exe'), '"' + TargetUserFile + '" /inheritance:r /grant:r "SYSTEM:(F)" "Administrators:(F)"');
 
   RunHidden(ExpandConstant('{sysnative}\sc.exe'), 'stop SuperWallAgent');
   RunHidden(ExpandConstant('{sysnative}\sc.exe'), 'delete SuperWallAgent');
