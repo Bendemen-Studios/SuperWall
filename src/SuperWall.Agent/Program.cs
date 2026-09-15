@@ -7,6 +7,12 @@ public static class Program
 {
     public static async Task Main(string[] args)
     {
+        if (args.Any(arg => arg.Equals("--uninstall", StringComparison.OrdinalIgnoreCase)))
+        {
+            Environment.ExitCode = SuperWallUninstaller.Run();
+            return;
+        }
+
         var builder = Host.CreateApplicationBuilder(args);
         builder.Services.AddWindowsService(options => options.ServiceName = "SuperWall Agent");
         builder.Services.AddHostedService<PolicySyncService>();
