@@ -24,7 +24,6 @@ public static class WindowsUserScope
     private const uint TokenUser = 1;
     private const uint TokenQuery = 0x0008;
     private const int MaxPreferredLength = -1;
-    private const int LgIncludeIndirect = 0x0001;
     private const int NetApiStatusMoreData = 234;
 
     private static bool _loadedByUs;
@@ -234,40 +233,33 @@ public static class WindowsUserScope
             var groupName = account.Value[(account.Value.LastIndexOf('\\') + 1)..];
             IntPtr resume = IntPtr.Zero;
 
-            try
+            do
             {
-                do
+                var status = NetLocalGroupGetMembers(
+                    null, groupName, 2, out var buffer, MaxPreferredLength,
+                    out var entriesRead, out _, ref resume);
+
+                if (status != ErrorSuccess && status != NetApiStatusMoreData)
+                    return false;
+
+                try
                 {
-                    var status = NetLocalGroupGetMembers(
-                        null, groupName, 2, out var buffer, MaxPreferredLength,
-                        out var entriesRead, out _, ref resume);
-
-                    if (status != ErrorSuccess && status != NetApiStatusMoreData)
-                        return false;
-
-                    try
+                    var size = Marshal.SizeOf<LocalGroupMembersInfo2>();
+                    for (var i = 0; i < entriesRead; i++)
                     {
-                        var size = Marshal.SizeOf<LocalGroupMembersInfo2>();
-                        for (var i = 0; i < entriesRead; i++)
-                        {
-                            var item = Marshal.PtrToStructure<LocalGroupMembersInfo2>(buffer + i * size);
-                            if (item.Sid == IntPtr.Zero) continue;
-                            var memberSid = new SecurityIdentifier(item.Sid);
-                            if (memberSid.Equals(sid)) return true;
-                        }
+                        var item = Marshal.PtrToStructure<LocalGroupMembersInfo2>(buffer + i * size);
+                        if (item.Sid == IntPtr.Zero) continue;
+                        var memberSid = new SecurityIdentifier(item.Sid);
+                        if (memberSid.Equals(sid)) return true;
                     }
-                    finally
-                    {
-                        if (buffer != IntPtr.Zero) NetApiBufferFree(buffer);
-                    }
+                }
+                finally
+                {
+                    if (buffer != IntPtr.Zero) NetApiBufferFree(buffer);
+                }
 
-                    if (status != NetApiStatusMoreData) break;
-                } while (true);
-            }
-            finally
-            {
-                if (resume != IntPtr.Zero) NetApiBufferFree(resume);
-            }
+                if (status != NetApiStatusMoreData) break;
+            } while (true);
         }
         catch { }
 
