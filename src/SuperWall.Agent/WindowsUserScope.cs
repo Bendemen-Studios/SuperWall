@@ -6,10 +6,11 @@ using System.Security.Principal;
 namespace SuperWall.Agent;
 
 /// <summary>
-/// Resolves the Windows account whose browser policy should be enforced.
-/// The agent runs as LocalSystem, so HKCU is the service account rather than
-/// the child. The installer records the intended interactive account before
-/// elevation and this class treats that value as authoritative.
+/// Resolves the Windows account whose browser/app policy should be enforced.
+/// The agent runs as LocalSystem, so HKCU is the service account rather than the
+/// child. The installer records the intended interactive account before UAC.
+/// If an elevated installer accidentally records an administrator, we repair
+/// that state by selecting the active non-administrator console user instead.
 /// </summary>
 public static class WindowsUserScope
 {
@@ -22,9 +23,20 @@ public static class WindowsUserScope
     private const int WtsUserName = 5;
     private const uint TokenUser = 1;
     private const uint TokenQuery = 0x0008;
+    private const int MaxPreferredLength = -1;
+    private const int NetApiStatusMoreData = 234;
 
     private static bool _loadedByUs;
     private static string? _resolvedTargetUser;
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct LocalGroupMembersInfo2
+    {
+        public IntPtr Name;
+        public int Usage;
+        public IntPtr Sid;
+        public int Comment;
+    }
 
     [DllImport("advapi32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
     private static extern int RegLoadKey(IntPtr hKey, string lpSubKey, string lpFile);
@@ -32,7 +44,7 @@ public static class WindowsUserScope
     [DllImport("advapi32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
     private static extern int RegUnLoadKey(IntPtr hKey, string lpSubKey);
 
-    [DllImport("advapi32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+    [DllImport("advapi32.dll", SetLastError = true)]
     private static extern bool OpenProcessToken(IntPtr processHandle, uint desiredAccess, out IntPtr tokenHandle);
 
     [DllImport("advapi32.dll", SetLastError = true)]
@@ -55,6 +67,20 @@ public static class WindowsUserScope
     [DllImport("Wtsapi32.dll")]
     private static extern void WTSFreeMemory(IntPtr pMemory);
 
+    [DllImport("Netapi32.dll", CharSet = CharSet.Unicode)]
+    private static extern int NetLocalGroupGetMembers(
+        string? serverName,
+        string localGroupName,
+        int level,
+        out IntPtr buffer,
+        int prefMaxLen,
+        out int entriesRead,
+        out int totalEntries,
+        ref IntPtr resumeHandle);
+
+    [DllImport("Netapi32.dll")]
+    private static extern int NetApiBufferFree(IntPtr buffer);
+
     public static string? TargetUserName()
     {
         if (!string.IsNullOrWhiteSpace(_resolvedTargetUser))
@@ -63,19 +89,40 @@ public static class WindowsUserScope
         try
         {
             var path = Path.Combine(StateDir, TargetUserFile);
-            if (!File.Exists(path)) return null;
-            var value = File.ReadAllText(path).Trim();
-            if (string.IsNullOrWhiteSpace(value)) return null;
-            _resolvedTargetUser = value;
-            return value;
+            var configured = File.Exists(path) ? File.ReadAllText(path).Trim() : null;
+
+            // UAC can change the identity seen by an elevated installer. Never
+            // allow an administrator to become the child policy target when a
+            // non-admin user is actively logged on at the console.
+            if (!string.IsNullOrWhiteSpace(configured) && !IsLocalAdministrator(configured))
+            {
+                _resolvedTargetUser = configured;
+                return configured;
+            }
+
+            var active = ActiveConsoleUserName();
+            if (!string.IsNullOrWhiteSpace(active) && !IsLocalAdministrator(active))
+            {
+                _resolvedTargetUser = active;
+                TryPersistTargetUser(active);
+                return active;
+            }
+
+            // Keep an explicitly configured account as a last resort when no
+            // safe non-admin console account can currently be resolved. This is
+            // important for machines where the child is not logged in yet.
+            if (!string.IsNullOrWhiteSpace(configured))
+            {
+                _resolvedTargetUser = configured;
+                return configured;
+            }
         }
-        catch { return null; }
+        catch { }
+
+        return null;
     }
 
-    public static SecurityIdentifier? TargetSid()
-    {
-        return TranslateToSid(TargetUserName());
-    }
+    public static SecurityIdentifier? TargetSid() => TranslateToSid(TargetUserName());
 
     /// <summary>Returns true only when the process is running as the configured target account.</summary>
     public static bool IsTargetUserProcess(Process process)
@@ -114,23 +161,18 @@ public static class WindowsUserScope
             normalized = normalized[(normalized.LastIndexOf('\\') + 1)..];
 
         if (string.IsNullOrWhiteSpace(normalized)) return false;
-        if (TranslateToSid($"{Environment.MachineName}\\{normalized}") is null && TranslateToSid(normalized) is null)
-            return false;
+        var sid = TranslateToSid(normalized);
+        if (sid is null || IsLocalAdministrator(sid)) return false;
 
-        try
-        {
-            Directory.CreateDirectory(StateDir);
-            File.WriteAllText(Path.Combine(StateDir, TargetUserFile), normalized);
-            _resolvedTargetUser = normalized;
-            return true;
-        }
-        catch { return false; }
+        return TryPersistTargetUser(normalized);
     }
 
     public static string? ResolveInstallTargetUser()
     {
         var active = ActiveConsoleUserName();
-        return string.IsNullOrWhiteSpace(active) ? null : active;
+        if (!string.IsNullOrWhiteSpace(active) && !IsLocalAdministrator(active))
+            return active;
+        return null;
     }
 
     public static RegistryKey? OpenUserPolicyKey(string relativePath, bool writable)
@@ -174,6 +216,66 @@ public static class WindowsUserScope
             try { return (SecurityIdentifier)new NTAccount(user).Translate(typeof(SecurityIdentifier)); }
             catch { return null; }
         }
+    }
+
+    private static bool IsLocalAdministrator(string? user)
+    {
+        var sid = TranslateToSid(user);
+        return sid is not null && IsLocalAdministrator(sid);
+    }
+
+    private static bool IsLocalAdministrator(SecurityIdentifier sid)
+    {
+        try
+        {
+            var administratorsSid = new SecurityIdentifier(WellKnownSidType.BuiltinAdministratorsSid, null);
+            var account = (NTAccount)administratorsSid.Translate(typeof(NTAccount));
+            var groupName = account.Value[(account.Value.LastIndexOf('\\') + 1)..];
+            IntPtr resume = IntPtr.Zero;
+
+            do
+            {
+                var status = NetLocalGroupGetMembers(
+                    null, groupName, 2, out var buffer, MaxPreferredLength,
+                    out var entriesRead, out _, ref resume);
+
+                if (status != ErrorSuccess && status != NetApiStatusMoreData)
+                    return false;
+
+                try
+                {
+                    var size = Marshal.SizeOf<LocalGroupMembersInfo2>();
+                    for (var i = 0; i < entriesRead; i++)
+                    {
+                        var item = Marshal.PtrToStructure<LocalGroupMembersInfo2>(buffer + i * size);
+                        if (item.Sid == IntPtr.Zero) continue;
+                        var memberSid = new SecurityIdentifier(item.Sid);
+                        if (memberSid.Equals(sid)) return true;
+                    }
+                }
+                finally
+                {
+                    if (buffer != IntPtr.Zero) NetApiBufferFree(buffer);
+                }
+
+                if (status != NetApiStatusMoreData) break;
+            } while (true);
+        }
+        catch { }
+
+        return false;
+    }
+
+    private static bool TryPersistTargetUser(string user)
+    {
+        try
+        {
+            Directory.CreateDirectory(StateDir);
+            File.WriteAllText(Path.Combine(StateDir, TargetUserFile), user.Trim());
+            _resolvedTargetUser = user.Trim();
+            return true;
+        }
+        catch { return false; }
     }
 
     private static string? ActiveConsoleUserName()
