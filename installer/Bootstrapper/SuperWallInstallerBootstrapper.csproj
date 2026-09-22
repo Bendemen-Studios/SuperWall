@@ -11,11 +11,11 @@
     <IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract>
     <EnableCompressionInSingleFile>true</EnableCompressionInSingleFile>
     <ApplicationManifest>app.manifest</ApplicationManifest>
-    <AssemblyName>SuperWall-Kids-Setup-0.5.10</AssemblyName>
-    <Version>0.5.10</Version>
-    <AssemblyVersion>0.5.10.0</AssemblyVersion>
-    <FileVersion>0.5.10.0</FileVersion>
-    <InformationalVersion>0.5.10</InformationalVersion>
+    <AssemblyName>SuperWall-Kids-Setup-0.5.11</AssemblyName>
+    <Version>0.5.11</Version>
+    <AssemblyVersion>0.5.11.0</AssemblyVersion>
+    <FileVersion>0.5.11.0</FileVersion>
+    <InformationalVersion>0.5.11</InformationalVersion>
     <RootNamespace>SuperWallInstallerBootstrapper</RootNamespace>
   </PropertyGroup>
 
