@@ -106,7 +106,7 @@ end;
 
 procedure CurStepChanged(CurStep: TSetupStep);
 var
-  DashboardUrl, EnrollmentKey, AgentPath, EnrollmentFile, DashboardFile, TargetUserFile, CommonDir, TargetUser: string;
+  DashboardUrl, EnrollmentKey, AgentPath, EnrollmentFile, DashboardFile, TargetUserFile, CommonDir, TargetUser, RecoveryScript, RecoveryScriptQ: string;
   WaitCount: Integer;
   WriteOk: Boolean;
 begin
@@ -212,5 +212,23 @@ begin
   RunHidden(ExpandConstant('{sysnative}\sc.exe'), 'create SuperWallAgent binPath= "' + AgentPath + '" start= auto obj= LocalSystem');
   RunHidden(ExpandConstant('{sysnative}\sc.exe'), 'description SuperWallAgent "SuperWall Kids enforcement agent"');
   RunHidden(ExpandConstant('{sysnative}\sc.exe'), 'sdset SuperWallAgent "{#ServiceSddl}"');
+
+  { Start the agent first. Recovery is configured only after it has actually
+    stayed running for a short validation period. If AVG blocks/quarantines the
+    executable during the initial install, SCM has no recovery action yet and
+    therefore cannot keep relaunching the blocked process. }
   RunHidden(ExpandConstant('{sysnative}\sc.exe'), 'start SuperWallAgent');
+
+  RecoveryScript := CommonDir + '\configure-recovery.cmd';
+  RecoveryScriptQ := '"' + RecoveryScript + '"';
+  SaveStringToFile(RecoveryScript,
+    '@echo off' + #13#10 +
+    'setlocal' + #13#10 +
+    'timeout /t 12 /nobreak >nul' + #13#10 +
+    'sc.exe query SuperWallAgent | findstr /i "RUNNING" >nul' + #13#10 +
+    'if errorlevel 1 exit /b 0' + #13#10 +
+    'sc.exe failure SuperWallAgent reset= 86400 actions= restart/60000/restart/120000/""/180000 >nul 2>&1' + #13#10 +
+    'del /f /q ' + RecoveryScriptQ + ' >nul 2>&1' + #13#10 +
+    'exit /b 0' + #13#10, False);
+  Exec(ExpandConstant('{sysnative}\cmd.exe'), '/d /c ' + RecoveryScriptQ, '', SW_HIDE, ewNoWait, WaitCount);
 end;
