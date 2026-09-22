@@ -51,13 +51,13 @@ internal static class Program
                 stream.CopyTo(output);
             }
 
-            // The bootstrapper is deliberately asInvoker. Capture the exact identity that
-            // launched this process before the UAC boundary is crossed by the inner installer.
+            // The bootstrapper is deliberately asInvoker. Capture the intended child-account
+            // identity before the UAC boundary is crossed by the inner installer.
             var target = CaptureLaunchingUser();
             if (target is null)
                 throw new InvalidOperationException(
                     "SuperWall kan de oorspronkelijke Windows-gebruiker niet veilig bepalen. " +
-                    "Start de Kids installer rechtstreeks vanuit het kindaccount.");
+                    "Log in op het kindaccount en start de Kids installer opnieuw.");
 
             var psi = new ProcessStartInfo
             {
@@ -103,37 +103,32 @@ internal static class Program
 
     private static LaunchingUser? CaptureLaunchingUser()
     {
+        // Prefer the actual process identity when the bootstrapper was started normally.
+        // If Windows has already elevated the bootstrapper, do not accidentally bind the
+        // installation to the administrator account. Resolve the active interactive user.
         try
         {
             using var identity = WindowsIdentity.GetCurrent();
-
-            // Never allow an already-elevated/admin identity to become the child target.
-            if (!identity.User?.IsAccountSid() ?? true)
-                return null;
-
             var sid = identity.User;
-            if (sid is null)
-                return null;
 
-            var accountName = identity.Name?.Trim();
-            if (string.IsNullOrWhiteSpace(accountName))
-                accountName = ResolveAccountName(sid);
+            if (sid is not null && sid.IsAccountSid() && !IsAdministrator(sid))
+            {
+                var accountName = identity.Name?.Trim();
+                if (string.IsNullOrWhiteSpace(accountName))
+                    accountName = ResolveAccountName(sid);
 
-            if (string.IsNullOrWhiteSpace(accountName))
-                return null;
-
-            if (IsAdministrator(sid))
-                return null;
-
-            return new LaunchingUser(accountName, sid);
+                if (!string.IsNullOrWhiteSpace(accountName))
+                    return new LaunchingUser(accountName, sid);
+            }
         }
         catch
         {
-            // Fallback for a normal non-elevated launcher where WindowsIdentity.Name may
-            // be unavailable in unusual provider configurations: resolve the active console
-            // session, but only as a fallback and only after checking it is non-admin.
-            return CaptureActiveConsoleUser();
+            // Resolve through the interactive console session below.
         }
+
+        // This is the important elevated-launch path: the admin token is not the target.
+        // The active console account is resolved and its SID is passed across UAC.
+        return CaptureActiveConsoleUser();
     }
 
     private static LaunchingUser? CaptureActiveConsoleUser()
