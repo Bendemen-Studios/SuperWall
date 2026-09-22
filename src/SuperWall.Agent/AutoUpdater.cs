@@ -10,8 +10,6 @@ public sealed class AutoUpdater
     private const string ReleasesUrl = "https://api.github.com/repos/Bendemen-Studios/SuperWall/releases?per_page=20";
     private const string AgentAssetName = "SuperWall-Agent-win-x64.exe";
     private const string AgentChecksumName = "SHA256-Agent.txt";
-    private const string UpdateSuppressionName = "update-suppressed.txt";
-    private static readonly TimeSpan UpdateRetryDelay = TimeSpan.FromHours(24);
     private readonly HttpClient _http = new() { Timeout = TimeSpan.FromMinutes(5) };
     private readonly string _stateDir;
 
@@ -47,12 +45,6 @@ public sealed class AutoUpdater
 
             var current = GetCurrentVersion();
             if (selectedRelease is null || latest is null || latest <= current) return;
-
-            if (IsUpdateSuppressed(latest))
-            {
-                AgentLogger.Info($"Update {latest} is temporarily suppressed after a previous launch failure or security-software block.");
-                return;
-            }
 
             JsonElement? agent = null;
             JsonElement? checksum = null;
@@ -112,11 +104,6 @@ public sealed class AutoUpdater
             var script = BuildUpdateScript(tempAgent, target, helperScript);
             await File.WriteAllTextAsync(helperScript, script, ct);
 
-            // Set the circuit breaker before starting the helper. If AVG or another
-            // security product blocks the staged executable/helper, the service will
-            // not immediately download and relaunch the same version again.
-            WriteUpdateSuppression(latest);
-
             var psi = new ProcessStartInfo
             {
                 FileName = Environment.GetEnvironmentVariable("ComSpec") ?? "cmd.exe",
@@ -128,13 +115,12 @@ public sealed class AutoUpdater
             using var helper = Process.Start(psi);
             if (helper is null)
             {
-                AgentLogger.Error($"Could not start update helper for {latest}; retry suppressed for 24 hours.");
                 TryDelete(tempAgent);
                 TryDelete(helperScript);
                 return;
             }
 
-            AgentLogger.Info($"Staged verified agent update {current} -> {latest}; repeated retry is suppressed until the new version is running.");
+            AgentLogger.Info($"Staged verified agent update {current} -> {latest}.");
             tempAgent = null;
             helperScript = null;
         }
@@ -146,36 +132,6 @@ public sealed class AutoUpdater
         {
             if (!string.IsNullOrWhiteSpace(tempAgent)) TryDelete(tempAgent);
             if (!string.IsNullOrWhiteSpace(helperScript)) TryDelete(helperScript);
-        }
-    }
-
-    private bool IsUpdateSuppressed(Version latest)
-    {
-        try
-        {
-            var path = Path.Combine(_stateDir, UpdateSuppressionName);
-            if (!File.Exists(path)) return false;
-            var parts = File.ReadAllText(path).Trim().Split('|', 2);
-            if (parts.Length != 2 || !Version.TryParse(parts[0], out var version) || version != latest) return false;
-            if (!DateTimeOffset.TryParse(parts[1], out var timestamp)) return false;
-            if (DateTimeOffset.UtcNow - timestamp < UpdateRetryDelay) return true;
-            TryDelete(path);
-        }
-        catch { }
-        return false;
-    }
-
-    private void WriteUpdateSuppression(Version latest)
-    {
-        try
-        {
-            Directory.CreateDirectory(_stateDir);
-            var path = Path.Combine(_stateDir, UpdateSuppressionName);
-            File.WriteAllText(path, $"{latest}|{DateTimeOffset.UtcNow:O}");
-        }
-        catch (Exception ex)
-        {
-            AgentLogger.Error("Could not persist updater retry suppression.", ex);
         }
     }
 
