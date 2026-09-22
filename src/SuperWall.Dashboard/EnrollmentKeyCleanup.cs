@@ -24,8 +24,10 @@ internal static class EnrollmentKeyCleanup
             using var connection = new SqliteConnection($"Data Source={db}");
             connection.Open();
             using var command = connection.CreateCommand();
-            command.CommandText = "DELETE FROM enrollment_keys WHERE expires_utc <= $now";
-            command.Parameters.AddWithValue("$now", DateTimeOffset.UtcNow.ToString("O"));
+            // Keep recently expired keys so the admin dashboard can show them as
+            // "Verlopen". Only purge expired keys after a 30-day retention period.
+            command.CommandText = "DELETE FROM enrollment_keys WHERE expires_utc <= $cutoff";
+            command.Parameters.AddWithValue("$cutoff", DateTimeOffset.UtcNow.AddDays(-30).ToString("O"));
             command.ExecuteNonQuery();
         }
         catch
