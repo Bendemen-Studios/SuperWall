@@ -212,10 +212,5 @@ begin
   RunHidden(ExpandConstant('{sysnative}\sc.exe'), 'create SuperWallAgent binPath= "' + AgentPath + '" start= auto obj= LocalSystem');
   RunHidden(ExpandConstant('{sysnative}\sc.exe'), 'description SuperWallAgent "SuperWall Kids enforcement agent"');
   RunHidden(ExpandConstant('{sysnative}\sc.exe'), 'sdset SuperWallAgent "{#ServiceSddl}"');
-  // Never configure Windows Service Control Manager to relaunch the agent after a crash.
-  // This is important when security software (for example AVG Behavior Shield/File Shield)
-  // terminates or quarantines the executable: SuperWall must remain stopped until the
-  // administrator resolves the security-product decision instead of opening repeatedly.
-  RunHidden(ExpandConstant('{sysnative}\sc.exe'), 'failure SuperWallAgent reset= 0 actions= ""');
   RunHidden(ExpandConstant('{sysnative}\sc.exe'), 'start SuperWallAgent');
 end;
