@@ -106,7 +106,7 @@ end;
 
 procedure CurStepChanged(CurStep: TSetupStep);
 var
-  DashboardUrl, EnrollmentKey, AgentPath, EnrollmentFile, DashboardFile, TargetUserFile, CommonDir, TargetUser, RecoveryScript, RecoveryScriptQ: string;
+  DashboardUrl, EnrollmentKey, AgentPath, EnrollmentFile, DashboardFile, TargetUserFile, TargetSidFile, CommonDir, TargetUser, TargetSid, RecoveryScript, RecoveryScriptQ: string;
   WaitCount: Integer;
   WriteOk: Boolean;
 begin
@@ -128,9 +128,13 @@ begin
   EnrollmentFile := CommonDir + '\enrollment.key';
   DashboardFile := CommonDir + '\dashboard.url';
   TargetUserFile := CommonDir + '\target-user.txt';
+  TargetSidFile := CommonDir + '\target-user.sid';
 
   if not DirExists(CommonDir) then
     ForceDirectories(CommonDir);
+
+  TargetUser := GetEnv('SUPERWALL_TARGET_USER');
+  TargetSid := GetEnv('SUPERWALL_TARGET_USER_SID');
 
   if not IsUpgrade then
   begin
@@ -150,35 +154,32 @@ begin
       MsgBox('SuperWall kon de enrollment key niet opslaan. De installatie is afgebroken.', mbError, MB_OK);
       Exit;
     end;
+  end;
 
-    TargetUser := GetEnv('SUPERWALL_TARGET_USER');
-    if Trim(TargetUser) = '' then
-    begin
-      MsgBox('SuperWall kon de oorspronkelijke Windows-gebruiker niet bepalen. Start de Kids installer vanuit het kindaccount.', mbError, MB_OK);
-      Exit;
-    end;
-
-    WriteOk := SaveStringToFile(TargetUserFile, TargetUser, False);
-    if (not WriteOk) or (not FileExists(TargetUserFile)) then
-    begin
-      MsgBox('SuperWall kon de doelgebruiker niet opslaan. De installatie is afgebroken.', mbError, MB_OK);
-      Exit;
-    end;
-  end
-  else if not FileExists(TargetUserFile) then
+  if Trim(TargetUser) = '' then
   begin
-    TargetUser := GetEnv('SUPERWALL_TARGET_USER');
-    if Trim(TargetUser) = '' then
-    begin
-      MsgBox('SuperWall kan de bestaande installatie niet veilig koppelen zonder de oorspronkelijke Windows-gebruiker.', mbError, MB_OK);
-      Exit;
-    end;
-    WriteOk := SaveStringToFile(TargetUserFile, TargetUser, False);
-    if (not WriteOk) or (not FileExists(TargetUserFile)) then
-    begin
-      MsgBox('SuperWall kon de doelgebruiker niet opslaan. De installatie is afgebroken.', mbError, MB_OK);
-      Exit;
-    end;
+    MsgBox('SuperWall kon de oorspronkelijke Windows-gebruiker niet veilig bepalen. Start de Kids installer vanuit het kindaccount.', mbError, MB_OK);
+    Exit;
+  end;
+
+  if Trim(TargetSid) = '' then
+  begin
+    MsgBox('SuperWall kon de beveiligde Windows-gebruikers-ID niet vastleggen. Start de Kids installer opnieuw vanuit het kindaccount.', mbError, MB_OK);
+    Exit;
+  end;
+
+  WriteOk := SaveStringToFile(TargetUserFile, TargetUser, False);
+  if (not WriteOk) or (not FileExists(TargetUserFile)) then
+  begin
+    MsgBox('SuperWall kon de doelgebruiker niet opslaan. De installatie is afgebroken.', mbError, MB_OK);
+    Exit;
+  end;
+
+  WriteOk := SaveStringToFile(TargetSidFile, TargetSid, False);
+  if (not WriteOk) or (not FileExists(TargetSidFile)) then
+  begin
+    MsgBox('SuperWall kon de beveiligde gebruikers-ID niet opslaan. De installatie is afgebroken.', mbError, MB_OK);
+    Exit;
   end;
 
   RunHidden(ExpandConstant('{sysnative}\reg.exe'), 'delete "HKLM\SOFTWARE\Policies\Microsoft\Edge" /v ProxyMode /f');
@@ -199,24 +200,21 @@ begin
   RunHidden(ExpandConstant('{sysnative}\reg.exe'), 'delete "HKLM\SOFTWARE\Policies\Google\Chrome" /v URLBlocklist /f');
 
   RunHidden(ExpandConstant('{sysnative}\icacls.exe'),
-    '"' + CommonDir + '" /inheritance:r /grant:r "SYSTEM:(OI)(CI)(F)" "Administrators:(OI)(CI)(F)" "Users:(OI)(CI)(RX)" /deny "Users:(OI)(CI)(W,DC,WDAC,WEA)"');
+    '"' + CommonDir + '" /inheritance:r /grant:r "SYSTEM:(OI)(CI)(F)" "Administrators:(OI)(CI)(F)" "Users:(OI)(CI)(RX)" /deny "Users:(OI)(CI,WDAC,WEA)"');
   if FileExists(EnrollmentFile) then
     RunHidden(ExpandConstant('{sysnative}\icacls.exe'), '"' + EnrollmentFile + '" /inheritance:r /grant:r "SYSTEM:(F)" "Administrators:(F)"');
   if FileExists(DashboardFile) then
     RunHidden(ExpandConstant('{sysnative}\icacls.exe'), '"' + DashboardFile + '" /inheritance:r /grant:r "SYSTEM:(F)" "Administrators:(F)"');
   if FileExists(TargetUserFile) then
     RunHidden(ExpandConstant('{sysnative}\icacls.exe'), '"' + TargetUserFile + '" /inheritance:r /grant:r "SYSTEM:(F)" "Administrators:(F)"');
+  if FileExists(TargetSidFile) then
+    RunHidden(ExpandConstant('{sysnative}\icacls.exe'), '"' + TargetSidFile + '" /inheritance:r /grant:r "SYSTEM:(F)" "Administrators:(F)"');
 
   RunHidden(ExpandConstant('{sysnative}\sc.exe'), 'stop SuperWallAgent');
   RunHidden(ExpandConstant('{sysnative}\sc.exe'), 'delete SuperWallAgent');
   RunHidden(ExpandConstant('{sysnative}\sc.exe'), 'create SuperWallAgent binPath= "' + AgentPath + '" start= auto obj= LocalSystem');
   RunHidden(ExpandConstant('{sysnative}\sc.exe'), 'description SuperWallAgent "SuperWall Kids enforcement agent"');
   RunHidden(ExpandConstant('{sysnative}\sc.exe'), 'sdset SuperWallAgent "{#ServiceSddl}"');
-
-  { Start the agent first. Recovery is configured only after it has actually
-    stayed running for a short validation period. If AVG blocks/quarantines the
-    executable during the initial install, SCM has no recovery action yet and
-    therefore cannot keep relaunching the blocked process. }
   RunHidden(ExpandConstant('{sysnative}\sc.exe'), 'start SuperWallAgent');
 
   RecoveryScript := CommonDir + '\configure-recovery.cmd';
