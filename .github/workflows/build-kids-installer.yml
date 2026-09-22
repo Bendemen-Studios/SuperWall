@@ -30,6 +30,7 @@ jobs:
       - name: Read and validate versions
         shell: pwsh
         run: |
+          Write-Host "Building SuperWall Kids from commit $env:GITHUB_SHA (ref $env:GITHUB_REF)"
           $installerContent = Get-Content -Raw installer/SuperWallKids.iss
           $installerMatch = [regex]::Match($installerContent, '#define\s+MyAppVersion\s+"([^"]+)"')
           if (-not $installerMatch.Success) { throw 'Could not determine MyAppVersion from installer/SuperWallKids.iss.' }
@@ -40,6 +41,8 @@ jobs:
           $agentMatch = [regex]::Match($agentContent, '<Version>([^<]+)</Version>')
           if (-not $agentMatch.Success) { throw 'Could not determine agent Version from SuperWall.Agent.csproj.' }
           $agentVersion = $agentMatch.Groups[1].Value.Trim()
+          Write-Host "Installer version: $installerVersion"
+          Write-Host "Agent version:     $agentVersion"
           if ($installerVersion -ne $agentVersion) {
             throw "Version mismatch: installer=$installerVersion agent=$agentVersion"
           }
@@ -49,7 +52,7 @@ jobs:
           }
 
           "INSTALLER_VERSION=$installerVersion" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
-          Write-Host "SuperWall Kids version: $installerVersion"
+          Write-Host "SuperWall Kids version validated: $installerVersion"
 
       - name: Restore
         run: dotnet restore src/SuperWall.Agent/SuperWall.Agent.csproj
