@@ -13,9 +13,7 @@ namespace SuperWall.Agent;
 /// </summary>
 public static class WindowsUserScope
 {
-    private static readonly string StateDir = Path.Combine(
-        Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData), "SuperWall");
-
+    private static readonly string StateDir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData), "SuperWall");
     private const string TargetUserFile = "target-user.txt";
     private const int ErrorSuccess = 0;
     private const int HKeyUsers = unchecked((int)0x80000003);
@@ -24,99 +22,55 @@ public static class WindowsUserScope
     private const uint TokenQuery = 0x0008;
     private const int MaxPreferredLength = -1;
     private const int NetApiStatusMoreData = 234;
+    private const int ErrorAccessDenied = 5;
 
     private static bool _loadedByUs;
     private static string? _resolvedTargetUser;
 
+    // LOCALGROUP_MEMBERS_INFO_2: PSID, SID_NAME_USE, LPWSTR.
+    // The old struct had the fields in the wrong order, causing a child SID lookup
+    // to read the domain-name pointer as a SID and making target-user detection fail.
     [StructLayout(LayoutKind.Sequential)]
     private struct LocalGroupMembersInfo2
     {
-        public IntPtr Name;
-        public int Usage;
         public IntPtr Sid;
-        public int Comment;
+        public int Usage;
+        public IntPtr DomainAndName;
     }
 
-    [DllImport("advapi32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
-    private static extern int RegLoadKey(IntPtr hKey, string lpSubKey, string lpFile);
-
-    [DllImport("advapi32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
-    private static extern int RegUnLoadKey(IntPtr hKey, string lpSubKey);
-
-    [DllImport("advapi32.dll", SetLastError = true)]
-    private static extern bool OpenProcessToken(IntPtr processHandle, uint desiredAccess, out IntPtr tokenHandle);
-
-    [DllImport("advapi32.dll", SetLastError = true)]
-    private static extern bool GetTokenInformation(IntPtr tokenHandle, uint tokenInformationClass, IntPtr tokenInformation, int tokenInformationLength, out int returnLength);
-
-    [DllImport("kernel32.dll", SetLastError = true)]
-    private static extern bool CloseHandle(IntPtr hObject);
-
-    [DllImport("kernel32.dll")]
-    private static extern uint WTSGetActiveConsoleSessionId();
-
-    [DllImport("Wtsapi32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
-    private static extern bool WTSQuerySessionInformation(
-        IntPtr hServer,
-        uint sessionId,
-        int wtsInfoClass,
-        out IntPtr ppBuffer,
-        out int pBytesReturned);
-
-    [DllImport("Wtsapi32.dll")]
-    private static extern void WTSFreeMemory(IntPtr pMemory);
-
-    [DllImport("Netapi32.dll", CharSet = CharSet.Unicode)]
-    private static extern int NetLocalGroupGetMembers(
-        string? serverName,
-        string localGroupName,
-        int level,
-        out IntPtr buffer,
-        int prefMaxLen,
-        out int entriesRead,
-        out int totalEntries,
-        ref IntPtr resumeHandle);
-
-    [DllImport("Netapi32.dll")]
-    private static extern int NetApiBufferFree(IntPtr buffer);
+    [DllImport("advapi32.dll", CharSet = CharSet.Unicode, SetLastError = true)] private static extern int RegLoadKey(IntPtr hKey, string lpSubKey, string lpFile);
+    [DllImport("advapi32.dll", CharSet = CharSet.Unicode, SetLastError = true)] private static extern int RegUnLoadKey(IntPtr hKey, string lpSubKey);
+    [DllImport("advapi32.dll", SetLastError = true)] private static extern bool OpenProcessToken(IntPtr processHandle, uint desiredAccess, out IntPtr tokenHandle);
+    [DllImport("advapi32.dll", SetLastError = true)] private static extern bool GetTokenInformation(IntPtr tokenHandle, uint tokenInformationClass, IntPtr tokenInformation, int tokenInformationLength, out int returnLength);
+    [DllImport("kernel32.dll", SetLastError = true)] private static extern bool CloseHandle(IntPtr hObject);
+    [DllImport("kernel32.dll")] private static extern uint WTSGetActiveConsoleSessionId();
+    [DllImport("Wtsapi32.dll", CharSet = CharSet.Unicode, SetLastError = true)] private static extern bool WTSQuerySessionInformation(IntPtr hServer, uint sessionId, int wtsInfoClass, out IntPtr ppBuffer, out int pBytesReturned);
+    [DllImport("Wtsapi32.dll")] private static extern void WTSFreeMemory(IntPtr pMemory);
+    [DllImport("Netapi32.dll", CharSet = CharSet.Unicode)] private static extern int NetLocalGroupGetMembers(string? serverName, string localGroupName, int level, out IntPtr buffer, int prefMaxLen, out int entriesRead, out int totalEntries, ref IntPtr resumeHandle);
+    [DllImport("Netapi32.dll")] private static extern int NetApiBufferFree(IntPtr buffer);
 
     public static string? TargetUserName()
     {
-        if (!string.IsNullOrWhiteSpace(_resolvedTargetUser))
-            return _resolvedTargetUser;
-
+        if (!string.IsNullOrWhiteSpace(_resolvedTargetUser)) return _resolvedTargetUser;
         try
         {
             var path = Path.Combine(StateDir, TargetUserFile);
             var configured = File.Exists(path) ? File.ReadAllText(path).Trim() : null;
-
-            // The bootstrapper captures the child before UAC. Trust it only after
-            // validating that the account really exists and is not an administrator.
-            if (!string.IsNullOrWhiteSpace(configured) && !IsLocalAdministrator(configured))
+            if (!string.IsNullOrWhiteSpace(configured) && TryResolveNonAdmin(configured, out var resolved))
             {
-                _resolvedTargetUser = configured;
-                return configured;
+                _resolvedTargetUser = resolved;
+                return resolved;
             }
-
-            // If an old installation contains an administrator target, repair it
-            // only to an actually non-admin interactive user. Never fall back to
-            // the administrator value: that was the original parental-control bug.
             var active = ActiveConsoleUserName();
-            if (!string.IsNullOrWhiteSpace(active) && !IsLocalAdministrator(active))
+            if (!string.IsNullOrWhiteSpace(active) && TryResolveNonAdmin(active, out resolved))
             {
-                _resolvedTargetUser = active;
-                TryPersistTargetUser(active);
-                return active;
+                _resolvedTargetUser = resolved;
+                TryPersistTargetUser(resolved);
+                return resolved;
             }
-
-            // No safe target exists right now. Returning null disables user-scoped
-            // policy instead of accidentally applying the child's policy to a parent.
             return null;
         }
-        catch
-        {
-            return null;
-        }
+        catch { return null; }
     }
 
     public static SecurityIdentifier? TargetSid() => TranslateToSid(TargetUserName());
@@ -125,7 +79,6 @@ public static class WindowsUserScope
     {
         var targetSid = TargetSid();
         if (targetSid is null) return false;
-
         try
         {
             if (!OpenProcessToken(process.Handle, TokenQuery, out var token)) return false;
@@ -138,8 +91,7 @@ public static class WindowsUserScope
                 {
                     if (!GetTokenInformation(token, TokenUser, buffer, length, out _)) return false;
                     var tokenUser = Marshal.ReadIntPtr(buffer);
-                    var sid = new SecurityIdentifier(tokenUser);
-                    return sid.Equals(targetSid);
+                    return new SecurityIdentifier(tokenUser).Equals(targetSid);
                 }
                 finally { Marshal.FreeHGlobal(buffer); }
             }
@@ -151,22 +103,15 @@ public static class WindowsUserScope
     public static bool SetTargetUser(string user)
     {
         if (string.IsNullOrWhiteSpace(user)) return false;
-
         var normalized = user.Trim();
-        if (normalized.Contains('\\', StringComparison.Ordinal))
-            normalized = normalized[(normalized.LastIndexOf('\\') + 1)..];
-
-        if (string.IsNullOrWhiteSpace(normalized)) return false;
-        var sid = TranslateToSid(normalized);
-        if (sid is null || IsLocalAdministrator(sid)) return false;
-
-        return TryPersistTargetUser(normalized);
+        if (!TryResolveNonAdmin(normalized, out var resolved)) return false;
+        return TryPersistTargetUser(resolved);
     }
 
     public static string? ResolveInstallTargetUser()
     {
         var active = ActiveConsoleUserName();
-        return !string.IsNullOrWhiteSpace(active) && !IsLocalAdministrator(active) ? active : null;
+        return !string.IsNullOrWhiteSpace(active) && TryResolveNonAdmin(active, out var resolved) ? resolved : null;
     }
 
     public static RegistryKey? OpenUserPolicyKey(string relativePath, bool writable)
@@ -192,6 +137,15 @@ public static class WindowsUserScope
         finally { _loadedByUs = false; }
     }
 
+    private static bool TryResolveNonAdmin(string user, out string resolved)
+    {
+        resolved = user.Trim();
+        var sid = TranslateToSid(resolved);
+        if (sid is null) return false;
+        if (IsLocalAdministrator(sid)) return false;
+        return true;
+    }
+
     private static SecurityIdentifier? TranslateToSid(string? user)
     {
         if (string.IsNullOrWhiteSpace(user)) return null;
@@ -199,7 +153,6 @@ public static class WindowsUserScope
         {
             if (user.Contains('\\', StringComparison.Ordinal))
                 return (SecurityIdentifier)new NTAccount(user).Translate(typeof(SecurityIdentifier));
-
             return (SecurityIdentifier)new NTAccount($"{Environment.MachineName}\\{user}").Translate(typeof(SecurityIdentifier));
         }
         catch
@@ -207,12 +160,6 @@ public static class WindowsUserScope
             try { return (SecurityIdentifier)new NTAccount(user).Translate(typeof(SecurityIdentifier)); }
             catch { return null; }
         }
-    }
-
-    private static bool IsLocalAdministrator(string? user)
-    {
-        var sid = TranslateToSid(user);
-        return sid is not null && IsLocalAdministrator(sid);
     }
 
     private static bool IsLocalAdministrator(SecurityIdentifier sid)
@@ -223,7 +170,6 @@ public static class WindowsUserScope
             var account = (NTAccount)administratorsSid.Translate(typeof(NTAccount));
             var groupName = account.Value[(account.Value.LastIndexOf('\\') + 1)..];
             IntPtr resume = IntPtr.Zero;
-
             do
             {
                 var status = NetLocalGroupGetMembers(null, groupName, 2, out var buffer, MaxPreferredLength, out var entriesRead, out _, ref resume);
@@ -234,18 +180,14 @@ public static class WindowsUserScope
                     for (var i = 0; i < entriesRead; i++)
                     {
                         var item = Marshal.PtrToStructure<LocalGroupMembersInfo2>(buffer + i * size);
-                        if (item.Sid == IntPtr.Zero) continue;
-                        if (new SecurityIdentifier(item.Sid).Equals(sid)) return true;
+                        if (item.Sid != IntPtr.Zero && new SecurityIdentifier(item.Sid).Equals(sid)) return true;
                     }
                 }
-                finally
-                {
-                    if (buffer != IntPtr.Zero) NetApiBufferFree(buffer);
-                }
+                finally { if (buffer != IntPtr.Zero) NetApiBufferFree(buffer); }
                 if (status != NetApiStatusMoreData) break;
             } while (true);
         }
-        catch { }
+        catch { return false; }
         return false;
     }
 
@@ -277,18 +219,12 @@ public static class WindowsUserScope
     private static void EnsureTargetHiveLoaded(SecurityIdentifier sid)
     {
         var sidText = sid.Value;
-        using (var existing = Registry.Users.OpenSubKey(sidText))
-        {
-            if (existing is not null) return;
-        }
-
+        using (var existing = Registry.Users.OpenSubKey(sidText)) { if (existing is not null) return; }
         var profile = ProfilePath(sid);
         if (string.IsNullOrWhiteSpace(profile)) return;
         var hiveFile = Path.Combine(profile, "NTUSER.DAT");
         if (!File.Exists(hiveFile)) return;
-
-        if (RegLoadKey(new IntPtr(HKeyUsers), sidText, hiveFile) == ErrorSuccess)
-            _loadedByUs = true;
+        if (RegLoadKey(new IntPtr(HKeyUsers), sidText, hiveFile) == ErrorSuccess) _loadedByUs = true;
     }
 
     public static string? ProfilePath()
