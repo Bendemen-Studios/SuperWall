@@ -20,8 +20,25 @@ internal static class Program
     [DllImport("Wtsapi32.dll")]
     private static extern void WTSFreeMemory(IntPtr pMemory);
 
+    [DllImport("Netapi32.dll", CharSet = CharSet.Unicode)]
+    private static extern int NetLocalGroupGetMembers(string? serverName, string localGroupName, int level, out IntPtr buffer, int prefMaxLen, out int entriesRead, out int totalEntries, ref IntPtr resumeHandle);
+
+    [DllImport("Netapi32.dll")]
+    private static extern int NetApiBufferFree(IntPtr buffer);
+
     private const int WtsUserName = 5;
     private const int WtsDomainName = 7;
+    private const int ErrorSuccess = 0;
+    private const int ErrorMoreData = 234;
+    private const int MaxPreferredLength = -1;
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct LocalGroupMembersInfo2
+    {
+        public IntPtr Sid;
+        public int Usage;
+        public IntPtr DomainAndName;
+    }
 
     [STAThread]
     private static int Main(string[] args)
@@ -103,9 +120,8 @@ internal static class Program
 
     private static LaunchingUser? CaptureLaunchingUser()
     {
-        // Prefer the actual process identity when the bootstrapper was started normally.
-        // If Windows has already elevated the bootstrapper, do not accidentally bind the
-        // installation to the administrator account. Resolve the active interactive user.
+        // If the bootstrapper was started normally, its token is the actual child account.
+        // Only fall back to the interactive session when the bootstrapper is already elevated.
         try
         {
             using var identity = WindowsIdentity.GetCurrent();
@@ -126,8 +142,8 @@ internal static class Program
             // Resolve through the interactive console session below.
         }
 
-        // This is the important elevated-launch path: the admin token is not the target.
-        // The active console account is resolved and its SID is passed across UAC.
+        // Important elevated-launch path: never bind the installation to the administrator
+        // token that crossed UAC. Resolve the interactive Windows account instead.
         return CaptureActiveConsoleUser();
     }
 
@@ -144,22 +160,30 @@ internal static class Program
             if (string.IsNullOrWhiteSpace(user))
                 return null;
 
-            var accountName = string.IsNullOrWhiteSpace(domain)
-                ? user.Trim()
-                : domain.Trim() + "\\" + user.Trim();
+            var candidates = new List<string>();
+            if (!string.IsNullOrWhiteSpace(domain))
+                candidates.Add(domain.Trim() + "\\" + user.Trim());
+            candidates.Add(Environment.MachineName + "\\" + user.Trim());
+            candidates.Add(user.Trim());
 
-            if (!TryTranslateSid(accountName, out var sid) || sid is null)
-                return null;
+            foreach (var accountName in candidates.Distinct(StringComparer.OrdinalIgnoreCase))
+            {
+                if (!TryTranslateSid(accountName, out var sid) || sid is null)
+                    continue;
 
-            if (IsAdministrator(sid))
-                return null;
+                if (IsAdministrator(sid))
+                    continue;
 
-            return new LaunchingUser(accountName, sid);
+                var resolvedName = ResolveAccountName(sid) ?? accountName;
+                return new LaunchingUser(resolvedName, sid);
+            }
         }
         catch
         {
-            return null;
+            // The caller will receive the safe failure message rather than guessing an account.
         }
+
+        return null;
     }
 
     private static string? ResolveAccountName(SecurityIdentifier sid)
@@ -192,22 +216,55 @@ internal static class Program
     {
         try
         {
-            var identity = new WindowsIdentity(sid.Value);
-            return new WindowsPrincipal(identity).IsInRole(WindowsBuiltInRole.Administrator);
+            var administratorsSid = new SecurityIdentifier(WellKnownSidType.BuiltinAdministratorsSid, null);
+            var account = (NTAccount)administratorsSid.Translate(typeof(NTAccount));
+            var groupName = account.Value[(account.Value.LastIndexOf('\\') + 1)..];
+            IntPtr resume = IntPtr.Zero;
+
+            do
+            {
+                var status = NetLocalGroupGetMembers(
+                    null,
+                    groupName,
+                    2,
+                    out var buffer,
+                    MaxPreferredLength,
+                    out var entriesRead,
+                    out _,
+                    ref resume);
+
+                // Fail closed if Windows cannot enumerate the Administrators group.
+                if (status != ErrorSuccess && status != ErrorMoreData)
+                    return true;
+
+                try
+                {
+                    var size = Marshal.SizeOf<LocalGroupMembersInfo2>();
+                    for (var i = 0; i < entriesRead; i++)
+                    {
+                        var item = Marshal.PtrToStructure<LocalGroupMembersInfo2>(buffer + i * size);
+                        if (item.Sid != IntPtr.Zero && new SecurityIdentifier(item.Sid).Equals(sid))
+                            return true;
+                    }
+                }
+                finally
+                {
+                    if (buffer != IntPtr.Zero)
+                        NetApiBufferFree(buffer);
+                }
+
+                if (status != ErrorMoreData)
+                    break;
+            }
+            while (true);
         }
         catch
         {
-            try
-            {
-                var current = WindowsIdentity.GetCurrent();
-                return current.User?.Equals(sid) == true &&
-                       new WindowsPrincipal(current).IsInRole(WindowsBuiltInRole.Administrator);
-            }
-            catch
-            {
-                return true;
-            }
+            // Never treat an account as safe when administrator membership cannot be verified.
+            return true;
         }
+
+        return false;
     }
 
     private static string? QueryWtsString(uint sessionId, int infoClass)
