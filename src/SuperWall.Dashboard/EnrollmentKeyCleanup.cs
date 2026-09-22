@@ -10,7 +10,8 @@ internal static class EnrollmentKeyCleanup
     [System.Runtime.CompilerServices.ModuleInitializer]
     internal static void Initialize()
     {
-        _timer = new Timer(Cleanup, null, TimeSpan.FromSeconds(30), TimeSpan.FromMinutes(1));
+        // Keep expired keys visible for up to one cleanup interval, then purge them hourly.
+        _timer = new Timer(Cleanup, null, TimeSpan.FromHours(1), TimeSpan.FromHours(1));
     }
 
     private static void Cleanup(object? _)
@@ -24,10 +25,10 @@ internal static class EnrollmentKeyCleanup
             using var connection = new SqliteConnection($"Data Source={db}");
             connection.Open();
             using var command = connection.CreateCommand();
-            // Keep recently expired keys so the admin dashboard can show them as
-            // "Verlopen". Only purge expired keys after a 30-day retention period.
-            command.CommandText = "DELETE FROM enrollment_keys WHERE expires_utc <= $cutoff";
-            command.Parameters.AddWithValue("$cutoff", DateTimeOffset.UtcNow.AddDays(-30).ToString("O"));
+            // Remove only keys that have actually expired. Valid, used and revoked keys
+            // remain in the dashboard until their expiration time.
+            command.CommandText = "DELETE FROM enrollment_keys WHERE expires_utc <= $now";
+            command.Parameters.AddWithValue("$now", DateTimeOffset.UtcNow.ToString("O"));
             command.ExecuteNonQuery();
         }
         catch
