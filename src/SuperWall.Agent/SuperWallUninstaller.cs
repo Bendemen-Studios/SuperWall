@@ -73,14 +73,43 @@ public static class SuperWallUninstaller
 
     private static void ResetCurrentUserBrowserPolicies()
     {
-        // Remove the complete SuperWall-managed Chromium policy roots for the
-        // current Windows user. This clears values and subkeys such as
-        // URLBlocklist, while leaving HKLM and other users untouched.
+        // Remove only policy values/subkeys that SuperWall owns. Do not delete
+        // an entire browser policy root because another administrator may have
+        // configured unrelated policies there.
+        var ownedValues = new[]
+        {
+            "ProxyMode",
+            "ProxyServer",
+            "DnsOverHttpsMode",
+            "QuicAllowed",
+            "BackgroundModeEnabled",
+            "ExtensionInstallBlocklist",
+            "ProxyBypassList",
+            "DownloadRestrictions",
+            "URLBlocklist"
+        };
+
         foreach (var path in ChromiumPolicyPaths)
         {
             try
             {
-                Registry.CurrentUser.DeleteSubKeyTree(path, throwOnMissingSubKey: false);
+                using var key = Registry.CurrentUser.OpenSubKey(path, writable: true);
+                if (key is null) continue;
+
+                foreach (var value in ownedValues)
+                {
+                    try { key.DeleteValue(value, throwOnMissingValue: false); }
+                    catch (Exception ex)
+                    {
+                        AgentLogger.Error($"Could not remove browser policy value {path}\\{value}.", ex);
+                    }
+                }
+
+                try { key.DeleteSubKeyTree("URLBlocklist", throwOnMissingSubKey: false); }
+                catch (Exception ex)
+                {
+                    AgentLogger.Error($"Could not remove browser URLBlocklist policy at {path}.", ex);
+                }
             }
             catch (Exception ex)
             {
