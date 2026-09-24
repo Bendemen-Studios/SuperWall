@@ -10,6 +10,8 @@ internal static class Program
     private const string InnerResourceName = "SuperWall-Kids-Inner.exe";
     private const string TargetUserVariable = "SUPERWALL_TARGET_USER";
     private const string TargetSidVariable = "SUPERWALL_TARGET_USER_SID";
+    private const string TargetUserArgument = "/SUPERWALL_TARGET_USER=";
+    private const string TargetSidArgument = "/SUPERWALL_TARGET_SID=";
 
     [DllImport("kernel32.dll")]
     private static extern uint WTSGetActiveConsoleSessionId();
@@ -68,22 +70,27 @@ internal static class Program
                 stream.CopyTo(output);
             }
 
-            // The bootstrapper is deliberately asInvoker. Capture the intended child-account
-            // identity before the UAC boundary is crossed by the inner installer.
             var target = CaptureLaunchingUser();
             if (target is null)
                 throw new InvalidOperationException(
                     "SuperWall kan de oorspronkelijke Windows-gebruiker niet veilig bepalen. " +
                     "Log in op het kindaccount en start de Kids installer opnieuw.");
 
+            var forwardedArgs = args.Select(QuoteArgument).ToList();
+            forwardedArgs.Add(QuoteArgument(TargetUserArgument + target.AccountName));
+            forwardedArgs.Add(QuoteArgument(TargetSidArgument + target.Sid.Value));
+
             var psi = new ProcessStartInfo
             {
                 FileName = innerPath,
                 UseShellExecute = false,
                 WorkingDirectory = runDirectory,
-                Arguments = string.Join(" ", args.Select(QuoteArgument))
+                Arguments = string.Join(" ", forwardedArgs)
             };
 
+            // Environment variables are retained as a convenience, but the command-line
+            // parameters above are the authoritative transport across the UAC boundary.
+            // Windows may recreate an elevated installer process and change its environment.
             psi.Environment["TEMP"] = safeTemp;
             psi.Environment["TMP"] = safeTemp;
             psi.Environment[TargetUserVariable] = target.AccountName;
@@ -120,8 +127,6 @@ internal static class Program
 
     private static LaunchingUser? CaptureLaunchingUser()
     {
-        // If the bootstrapper was started normally, its token is the actual child account.
-        // Only fall back to the interactive session when the bootstrapper is already elevated.
         try
         {
             using var identity = WindowsIdentity.GetCurrent();
@@ -137,13 +142,8 @@ internal static class Program
                     return new LaunchingUser(accountName, sid);
             }
         }
-        catch
-        {
-            // Resolve through the interactive console session below.
-        }
+        catch { }
 
-        // Important elevated-launch path: never bind the installation to the administrator
-        // token that crossed UAC. Resolve the interactive Windows account instead.
         return CaptureActiveConsoleUser();
     }
 
@@ -178,24 +178,15 @@ internal static class Program
                 return new LaunchingUser(resolvedName, sid);
             }
         }
-        catch
-        {
-            // The caller will receive the safe failure message rather than guessing an account.
-        }
+        catch { }
 
         return null;
     }
 
     private static string? ResolveAccountName(SecurityIdentifier sid)
     {
-        try
-        {
-            return sid.Translate(typeof(NTAccount)).Value;
-        }
-        catch
-        {
-            return null;
-        }
+        try { return sid.Translate(typeof(NTAccount)).Value; }
+        catch { return null; }
     }
 
     private static bool TryTranslateSid(string accountName, out SecurityIdentifier? sid)
@@ -206,10 +197,7 @@ internal static class Program
             sid = (SecurityIdentifier)new NTAccount(accountName).Translate(typeof(SecurityIdentifier));
             return true;
         }
-        catch
-        {
-            return false;
-        }
+        catch { return false; }
     }
 
     private static bool IsAdministrator(SecurityIdentifier sid)
@@ -224,16 +212,9 @@ internal static class Program
             do
             {
                 var status = NetLocalGroupGetMembers(
-                    null,
-                    groupName,
-                    2,
-                    out var buffer,
-                    MaxPreferredLength,
-                    out var entriesRead,
-                    out _,
-                    ref resume);
+                    null, groupName, 2, out var buffer, MaxPreferredLength,
+                    out var entriesRead, out _, ref resume);
 
-                // Fail closed if Windows cannot enumerate the Administrators group.
                 if (status != ErrorSuccess && status != ErrorMoreData)
                     return true;
 
@@ -260,7 +241,6 @@ internal static class Program
         }
         catch
         {
-            // Never treat an account as safe when administrator membership cannot be verified.
             return true;
         }
 
@@ -272,14 +252,8 @@ internal static class Program
         if (!WTSQuerySessionInformation(IntPtr.Zero, sessionId, infoClass, out var buffer, out _))
             return null;
 
-        try
-        {
-            return Marshal.PtrToStringUni(buffer)?.Trim();
-        }
-        finally
-        {
-            WTSFreeMemory(buffer);
-        }
+        try { return Marshal.PtrToStringUni(buffer)?.Trim(); }
+        finally { WTSFreeMemory(buffer); }
     }
 
     private static void ScheduleCleanup(string runDirectory)
@@ -300,12 +274,8 @@ internal static class Program
                 WindowStyle = ProcessWindowStyle.Hidden,
                 ArgumentList =
                 {
-                    "-NoProfile",
-                    "-NonInteractive",
-                    "-ExecutionPolicy",
-                    "Bypass",
-                    "-Command",
-                    script
+                    "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass",
+                    "-Command", script
                 }
             });
         }
@@ -315,11 +285,11 @@ internal static class Program
     private static string QuoteArgument(string value)
     {
         if (value.Length == 0)
-            return "\"\"";
+            return """";
 
         if (!value.Any(char.IsWhiteSpace) && !value.Contains('"'))
             return value;
 
-        return "\"" + value.Replace("\\", "\\\\").Replace("\"", "\\\"") + "\"";
+        return """ + value.Replace("\", "\\").Replace(""", "\"") + """;
     }
 }
