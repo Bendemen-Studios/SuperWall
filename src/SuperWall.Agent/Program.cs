@@ -16,6 +16,24 @@ public static class Program
             return;
         }
 
+        if (command is "-update" or "--update")
+        {
+            if (!SuperWallUninstaller.IsAdministrator())
+            {
+                Environment.ExitCode = 740;
+                return;
+            }
+
+            var stateDir = Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData),
+                "SuperWall");
+
+            Console.WriteLine("SuperWall update controleren...");
+            await new AutoUpdater(stateDir).CheckAndInstallAsync(CancellationToken.None);
+            Console.WriteLine("SuperWall update gestart indien een nieuwere release beschikbaar is.");
+            return;
+        }
+
         if (command is "-version" or "--version")
         {
             if (!SuperWallUninstaller.IsAdministrator())
