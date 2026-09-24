@@ -52,7 +52,7 @@ public sealed class PolicySyncService : BackgroundService
                 nextUpdateCheck = DateTimeOffset.UtcNow.AddMinutes(15);
             }
 
-            await Task.Delay(TimeSpan.FromSeconds(60), stoppingToken);
+            await Task.Delay(TimeSpan.FromMilliseconds(500), stoppingToken);
         }
     }
 
@@ -184,7 +184,7 @@ public sealed class PolicySyncService : BackgroundService
                 if (_revoked || string.IsNullOrWhiteSpace(_agentToken)) return;
             }
 
-            using var request = new HttpRequestMessage(HttpMethod.Get, $"{_dashboard.TrimEnd('/')}/api/agent/{Uri.EscapeDataString(_deviceId)}");
+            using var request = new HttpRequestMessage(HttpMethod.Get, $"{_dashboard.TrimEnd('/')}/api/agent/{Uri.EscapeDataString(_deviceId)}/wait?version={_policy.Version}");
             request.Headers.Add("X-SuperWall-Agent", _agentToken);
             using var response = await _http.SendAsync(request, ct);
 
