@@ -136,7 +136,7 @@ public static class WindowsUserScope
         try
         {
             EnsureTargetHiveLoaded(sid);
-            var fullPath = $"{sid.Value}\{relativePath}";
+            var fullPath = $@"{sid.Value}\{relativePath}";
             return writable ? Registry.Users.CreateSubKey(fullPath, true) : Registry.Users.OpenSubKey(fullPath, writable);
         }
         catch { return null; }
@@ -219,6 +219,8 @@ public static class WindowsUserScope
         {
             Directory.CreateDirectory(StateDir);
             File.WriteAllText(Path.Combine(StateDir, TargetUserFile), user.Trim());
+            if (_resolvedTargetSid is not null)
+                File.WriteAllText(Path.Combine(StateDir, TargetSidFile), _resolvedTargetSid.Value);
             _resolvedTargetUser = user.Trim();
             return true;
         }
@@ -264,7 +266,7 @@ public static class WindowsUserScope
     {
         try
         {
-            using var key = Registry.LocalMachine.OpenSubKey($@"SOFTWAREMicrosoftWindows NTCurrentVersionProfileList{sid.Value}");
+            using var key = Registry.LocalMachine.OpenSubKey($@"SOFTWARE\Microsoft\Windows NT\CurrentVersion\ProfileList\{sid.Value}");
             var path = key?.GetValue("ProfileImagePath") as string;
             return string.IsNullOrWhiteSpace(path) ? null : Environment.ExpandEnvironmentVariables(path);
         }
