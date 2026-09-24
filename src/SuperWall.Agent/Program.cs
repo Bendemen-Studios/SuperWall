@@ -14,7 +14,7 @@ public static class Program
         }
 
         var builder = Host.CreateApplicationBuilder(args);
-        builder.Services.AddWindowsService(options => options.ServiceName = "SuperWall Agent");
+        builder.Services.AddWindowsService(options => options.ServiceName = "SuperWallAgent");
         builder.Services.AddHostedService<PolicySyncService>();
         await builder.Build().RunAsync();
     }
