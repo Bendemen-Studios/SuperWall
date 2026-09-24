@@ -75,7 +75,7 @@ CREATE TABLE IF NOT EXISTS login_challenges(id TEXT PRIMARY KEY, admin_id TEXT N
         var (hash, salt) = HashPassword(password);
         using var cmd = c.CreateCommand();
         cmd.CommandText = "INSERT INTO admins(id,username,email,password_hash,password_salt,is_super_admin,enabled,created_utc) VALUES($i,$u,$e,$h,$s,$sa,1,$t)";
-        cmd.Parameters.AddWithValue("$i", id);
+        cmd.Parameters.AddWithValue("$i", challengeId);
         cmd.Parameters.AddWithValue("$u", username.Trim());
         cmd.Parameters.AddWithValue("$e", email.Trim().ToLowerInvariant());
         cmd.Parameters.AddWithValue("$h", hash);
@@ -108,15 +108,15 @@ CREATE TABLE IF NOT EXISTS login_challenges(id TEXT PRIMARY KEY, admin_id TEXT N
                 using var reader = existing.ExecuteReader();
                 if (reader.Read())
                 {
-                    var id = reader.GetString(0);
+                    var existingId = reader.GetString(0);
                     expires = DateTimeOffset.Parse(reader.GetString(1));
-                    return id;
+                    return existingId;
                 }
             }
 
             var code = RandomNumberGenerator.GetInt32(0, 1000000).ToString("D6");
             expires = DateTimeOffset.UtcNow.AddMinutes(10);
-            var id = Guid.NewGuid().ToString("N");
+            var challengeId = Guid.NewGuid().ToString("N");
             var hash = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(code)));
 
             using var clean = c.CreateCommand();
@@ -133,7 +133,7 @@ CREATE TABLE IF NOT EXISTS login_challenges(id TEXT PRIMARY KEY, admin_id TEXT N
             cmd.ExecuteNonQuery();
 
             SendCode(email, code);
-            return id;
+            return challengeId;
         }
     }
 
