@@ -346,7 +346,17 @@ public sealed class PolicySyncService : BackgroundService
 
     private static void RestartManagedBrowsers()
     {
-        foreach (var name in new[] { "msedge", "chrome", "brave", "vivaldi", "opera" })
+        // A policy change must immediately close every browser session belonging
+        // to the managed Windows user. This prevents an already-open browser from
+        // continuing with the old policy/network state.
+        foreach (var name in new[]
+        {
+            // Chromium/Edge based browsers
+            "msedge", "chrome", "brave", "vivaldi", "opera", "opera_gx",
+            "chromium", "chromium-browser", "arc", "sidekick", "yandex",
+            // Firefox based browsers
+            "firefox", "waterfox", "librewolf", "floorp", "zen"
+        })
         {
             try
             {
@@ -355,8 +365,14 @@ public sealed class PolicySyncService : BackgroundService
                     try
                     {
                         if (!WindowsUserScope.IsTargetUserProcess(process)) continue;
-                        if (!process.CloseMainWindow()) process.Kill(true);
-                        else if (!process.WaitForExit(3000)) process.Kill(true);
+
+                        // Ask the browser to close cleanly first so normal browser
+                        // shutdown/session handling can run. Force-close if it does
+                        // not exit within three seconds.
+                        if (!process.CloseMainWindow())
+                            process.Kill(true);
+                        else if (!process.WaitForExit(3000))
+                            process.Kill(true);
                     }
                     catch { }
                     finally { process.Dispose(); }
