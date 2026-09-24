@@ -45,17 +45,21 @@ public static class WindowsUserScope
             var sidPath = Path.Combine(StateDir, TargetSidFile);
             var configuredSid = File.Exists(sidPath) ? File.ReadAllText(sidPath).Trim() : null;
 
-            if (!string.IsNullOrWhiteSpace(configuredSid) &&
-                SecurityIdentifier.TryParse(configuredSid, out var sid) &&
-                sid is not null &&
-                !IsLocalAdministrator(sid))
+            if (!string.IsNullOrWhiteSpace(configuredSid))
             {
-                var resolved = ResolveAccountName(sid);
-                if (!string.IsNullOrWhiteSpace(resolved))
+                SecurityIdentifier? sid = null;
+                try { sid = new SecurityIdentifier(configuredSid); }
+                catch (ArgumentException) { }
+
+                if (sid is not null && !IsLocalAdministrator(sid))
                 {
-                    _resolvedTargetSid = sid;
-                    _resolvedTargetUser = resolved;
-                    return resolved;
+                    var resolved = ResolveAccountName(sid);
+                    if (!string.IsNullOrWhiteSpace(resolved))
+                    {
+                        _resolvedTargetSid = sid;
+                        _resolvedTargetUser = resolved;
+                        return resolved;
+                    }
                 }
             }
 
