@@ -10,6 +10,8 @@ public sealed record AdminIdentity(string Id, string Username, string Email, boo
 
 public static class AdminAuth
 {
+    private static readonly object ChallengeLock = new();
+
     public static void EnsureSchema(SqliteConnection c, string superAdminPassword)
     {
         using var cmd = c.CreateCommand();
@@ -94,23 +96,45 @@ CREATE TABLE IF NOT EXISTS login_challenges(id TEXT PRIMARY KEY, admin_id TEXT N
 
     public static string CreateChallenge(SqliteConnection c, string adminId, string email, out DateTimeOffset expires)
     {
-        var code = RandomNumberGenerator.GetInt32(0, 1000000).ToString("D6");
-        expires = DateTimeOffset.UtcNow.AddMinutes(10);
-        var id = Guid.NewGuid().ToString("N");
-        var hash = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(code)));
-        using var clean = c.CreateCommand();
-        clean.CommandText = "DELETE FROM login_challenges WHERE admin_id=$a";
-        clean.Parameters.AddWithValue("$a", adminId);
-        clean.ExecuteNonQuery();
-        using var cmd = c.CreateCommand();
-        cmd.CommandText = "INSERT INTO login_challenges(id,admin_id,code_hash,expires_utc,attempts) VALUES($i,$a,$h,$e,0)";
-        cmd.Parameters.AddWithValue("$i", id);
-        cmd.Parameters.AddWithValue("$a", adminId);
-        cmd.Parameters.AddWithValue("$h", hash);
-        cmd.Parameters.AddWithValue("$e", expires.ToString("O"));
-        cmd.ExecuteNonQuery();
-        SendCode(email, code);
-        return id;
+        lock (ChallengeLock)
+        {
+            // Reuse an already-active challenge so repeated login requests cannot
+            // send multiple 2FA emails for the same login attempt.
+            using (var existing = c.CreateCommand())
+            {
+                existing.CommandText = "SELECT id,expires_utc FROM login_challenges WHERE admin_id=$a AND expires_utc > $now ORDER BY expires_utc DESC LIMIT 1";
+                existing.Parameters.AddWithValue("$a", adminId);
+                existing.Parameters.AddWithValue("$now", DateTimeOffset.UtcNow.ToString("O"));
+                using var reader = existing.ExecuteReader();
+                if (reader.Read())
+                {
+                    var id = reader.GetString(0);
+                    expires = DateTimeOffset.Parse(reader.GetString(1));
+                    return id;
+                }
+            }
+
+            var code = RandomNumberGenerator.GetInt32(0, 1000000).ToString("D6");
+            expires = DateTimeOffset.UtcNow.AddMinutes(10);
+            var id = Guid.NewGuid().ToString("N");
+            var hash = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(code)));
+
+            using var clean = c.CreateCommand();
+            clean.CommandText = "DELETE FROM login_challenges WHERE admin_id=$a";
+            clean.Parameters.AddWithValue("$a", adminId);
+            clean.ExecuteNonQuery();
+
+            using var cmd = c.CreateCommand();
+            cmd.CommandText = "INSERT INTO login_challenges(id,admin_id,code_hash,expires_utc,attempts) VALUES($i,$a,$h,$e,0)";
+            cmd.Parameters.AddWithValue("$i", id);
+            cmd.Parameters.AddWithValue("$a", adminId);
+            cmd.Parameters.AddWithValue("$h", hash);
+            cmd.Parameters.AddWithValue("$e", expires.ToString("O"));
+            cmd.ExecuteNonQuery();
+
+            SendCode(email, code);
+            return id;
+        }
     }
 
     public static bool VerifyChallenge(SqliteConnection c, string challengeId, string adminId, string code)
