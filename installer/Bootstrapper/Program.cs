@@ -285,11 +285,11 @@ internal static class Program
     private static string QuoteArgument(string value)
     {
         if (value.Length == 0)
-            return """";
+            return "\"\"";
 
         if (!value.Any(char.IsWhiteSpace) && !value.Contains('"'))
             return value;
 
-        return """ + value.Replace("\", "\\").Replace(""", "\"") + """;
+        return "\"" + value.Replace("\\", "\\\\").Replace("\"", "\\\"") + "\"";
     }
 }
