@@ -26,12 +26,13 @@ public static class SuperWallUninstaller
     public static int Run()
     {
         if (!OperatingSystem.IsWindows()) return 1;
-        if (!IsAdministrator()) return 740; // ERROR_ELEVATION_REQUIRED
+        if (!IsAdministrator()) return 740;
 
         try
         {
             StopAndDeleteService();
             ResetCurrentUserBrowserPolicies();
+            ResetWindowsProxy();
             RemoveSuperWallScheduledTasks();
             RunGpUpdate();
             ScheduleSelfDelete();
@@ -73,9 +74,6 @@ public static class SuperWallUninstaller
 
     private static void ResetCurrentUserBrowserPolicies()
     {
-        // Remove only policy values/subkeys that SuperWall owns. Do not delete
-        // an entire browser policy root because another administrator may have
-        // configured unrelated policies there.
         var ownedValues = new[]
         {
             "ProxyMode",
@@ -115,6 +113,31 @@ public static class SuperWallUninstaller
             {
                 AgentLogger.Error($"Could not reset current-user browser policy: {path}", ex);
             }
+        }
+    }
+
+    private static void ResetWindowsProxy()
+    {
+        // Reset WinHTTP and the current Windows user's Internet Settings.
+        RunProcess("netsh.exe", "winhttp reset proxy", 10000);
+
+        try
+        {
+            using var key = Registry.CurrentUser.OpenSubKey(
+                @"Software\Microsoft\Windows\CurrentVersion\Internet Settings",
+                writable: true);
+
+            if (key is not null)
+            {
+                key.SetValue("ProxyEnable", 0, RegistryValueKind.DWord);
+                key.DeleteValue("ProxyServer", throwOnMissingValue: false);
+                key.DeleteValue("ProxyOverride", throwOnMissingValue: false);
+                key.DeleteValue("AutoConfigURL", throwOnMissingValue: false);
+            }
+        }
+        catch (Exception ex)
+        {
+            AgentLogger.Error("Could not reset current-user Windows proxy settings.", ex);
         }
     }
 
