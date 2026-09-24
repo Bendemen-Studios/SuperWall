@@ -49,7 +49,7 @@ public sealed class PolicySyncService : BackgroundService
             if (!_revoked && DateTimeOffset.UtcNow >= nextUpdateCheck)
             {
                 await _updater.CheckAndInstallAsync(stoppingToken);
-                nextUpdateCheck = DateTimeOffset.UtcNow.AddMinutes(15);
+                nextUpdateCheck = DateTimeOffset.UtcNow.AddHours(1);
             }
 
             await Task.Delay(TimeSpan.FromMilliseconds(500), stoppingToken);
