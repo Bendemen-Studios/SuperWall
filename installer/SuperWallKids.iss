@@ -1,5 +1,5 @@
 #define MyAppName "SuperWall Kids"
-#define MyAppVersion "0.5.16"
+#define MyAppVersion "0.5.17"
 #define MyPublisher "Bendemen Studios"
 #define MyExeName "SuperWall.Agent.exe"
 #define ServiceSddl "D:(A;;CCLCSWRPWPDTLOCRRC;;;SY)(A;;CCDCLCSWRPWPDTLOCRSDRCWDWO;;;BA)(A;;CCLCRP;;;AU)"
@@ -120,7 +120,7 @@ end;
 
 procedure CurStepChanged(CurStep: TSetupStep);
 var
-  DashboardUrl, EnrollmentKey, AgentPath, EnrollmentFile, DashboardFile, TargetUserFile, TargetSidFile, CommonDir, TargetUser, TargetSid, RecoveryScript, RecoveryScriptQ: string;
+  DashboardUrl, EnrollmentKey, AgentPath, EnrollmentFile, DashboardFile, TargetUserFile, TargetSidFile, CommonDir, TargetUser, TargetSid, RecoveryScript, RecoveryScriptQ, WrapperPath: string;
   WaitCount: Integer;
   WriteOk: Boolean;
 begin
@@ -138,6 +138,14 @@ begin
   if CurStep <> ssPostInstall then Exit;
 
   AgentPath := ExpandConstant('{app}\{#MyExeName}');
+  WrapperPath := ExpandConstant('{sys}\superwall.cmd');
+
+  // Install the administrator-only command shim: superwall -uninstall.
+  // The agent performs the actual administrator check before executing commands.
+  SaveStringToFile(WrapperPath,
+    '@echo off' + #13#10 +
+    '"%ProgramFiles%\SuperWall Kids\SuperWall.Agent.exe" %*' + #13#10 +
+    'exit /b %errorlevel%' + #13#10, False);
   CommonDir := ExpandConstant('{commonappdata}\SuperWall');
   EnrollmentFile := CommonDir + '\enrollment.key';
   DashboardFile := CommonDir + '\dashboard.url';
