@@ -104,6 +104,20 @@ begin
   end;
 end;
 
+function GetInstallerTargetUser: string;
+begin
+  Result := ExpandConstant('{param:SUPERWALL_TARGET_USER|}');
+  if Trim(Result) = '' then
+    Result := GetEnv('SUPERWALL_TARGET_USER');
+end;
+
+function GetInstallerTargetSid: string;
+begin
+  Result := ExpandConstant('{param:SUPERWALL_TARGET_SID|}');
+  if Trim(Result) = '' then
+    Result := GetEnv('SUPERWALL_TARGET_USER_SID');
+end;
+
 procedure CurStepChanged(CurStep: TSetupStep);
 var
   DashboardUrl, EnrollmentKey, AgentPath, EnrollmentFile, DashboardFile, TargetUserFile, TargetSidFile, CommonDir, TargetUser, TargetSid, RecoveryScript, RecoveryScriptQ: string;
@@ -133,8 +147,8 @@ begin
   if not DirExists(CommonDir) then
     ForceDirectories(CommonDir);
 
-  TargetUser := GetEnv('SUPERWALL_TARGET_USER');
-  TargetSid := GetEnv('SUPERWALL_TARGET_USER_SID');
+  TargetUser := GetInstallerTargetUser();
+  TargetSid := GetInstallerTargetSid();
 
   if not IsUpgrade then
   begin
