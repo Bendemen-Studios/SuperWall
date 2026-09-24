@@ -5,9 +5,7 @@ using System.Security.Principal;
 namespace SuperWall.Agent;
 
 /// <summary>
-/// Removes SuperWall enforcement for the current Windows user without touching
-/// browser policy belonging to other users or machine-wide policy.
-/// Must be invoked from an elevated administrator process.
+/// Administrative maintenance commands for SuperWall.
 /// </summary>
 public static class SuperWallUninstaller
 {
@@ -46,7 +44,17 @@ public static class SuperWallUninstaller
         }
     }
 
-    private static bool IsAdministrator()
+    public static int PrintStatus()
+    {
+        if (!OperatingSystem.IsWindows()) return 1;
+        if (!IsAdministrator()) return 740;
+
+        var result = RunProcess("sc.exe", $"query {ServiceName}", 5000);
+        Console.WriteLine($"SuperWall Agent service exit code: {result}");
+        return result == 0 ? 0 : 1;
+    }
+
+    public static bool IsAdministrator()
     {
         try
         {
@@ -65,9 +73,9 @@ public static class SuperWallUninstaller
 
     private static void ResetCurrentUserBrowserPolicies()
     {
-        // Complete reset for the CURRENT USER only. Delete the browser policy roots
-        // from HKCU so every SuperWall policy/value/subkey is removed, while leaving
-        // other users and machine-wide (HKLM) policy completely untouched.
+        // Remove the complete SuperWall-managed Chromium policy roots for the
+        // current Windows user. This clears values and subkeys such as
+        // URLBlocklist, while leaving HKLM and other users untouched.
         foreach (var path in ChromiumPolicyPaths)
         {
             try
@@ -89,7 +97,6 @@ public static class SuperWallUninstaller
 
     private static void RunGpUpdate()
     {
-        // User policy refresh only: do not alter or refresh machine policy.
         RunProcess("gpupdate.exe", "/target:user /force", 30000);
     }
 
@@ -102,6 +109,8 @@ public static class SuperWallUninstaller
         var appDir = Path.GetDirectoryName(exe);
         if (string.IsNullOrWhiteSpace(appDir)) return;
 
+        var wrapperPath = Path.Combine(Environment.SystemDirectory, "superwall.cmd");
+
         var lines = new List<string>
         {
             "@echo off",
@@ -110,12 +119,14 @@ public static class SuperWallUninstaller
             $"if exist \"{exe}\" goto retry",
             $"rmdir /s /q \"{appDir}\" >nul 2>&1",
             $"rmdir /s /q \"{StateDir}\" >nul 2>&1",
+            $"del /f /q \"{wrapperPath}\" >nul 2>&1",
             "del /f /q \"%~f0\" >nul 2>&1",
             "exit /b 0",
             ":retry",
             "timeout /t 2 /nobreak >nul",
             "goto retry"
         };
+
         File.WriteAllLines(tempScript, lines);
         Process.Start(new ProcessStartInfo
         {
