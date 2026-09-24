@@ -75,7 +75,7 @@ CREATE TABLE IF NOT EXISTS login_challenges(id TEXT PRIMARY KEY, admin_id TEXT N
         var (hash, salt) = HashPassword(password);
         using var cmd = c.CreateCommand();
         cmd.CommandText = "INSERT INTO admins(id,username,email,password_hash,password_salt,is_super_admin,enabled,created_utc) VALUES($i,$u,$e,$h,$s,$sa,1,$t)";
-        cmd.Parameters.AddWithValue("$i", challengeId);
+        cmd.Parameters.AddWithValue("$i", id);
         cmd.Parameters.AddWithValue("$u", username.Trim());
         cmd.Parameters.AddWithValue("$e", email.Trim().ToLowerInvariant());
         cmd.Parameters.AddWithValue("$h", hash);
@@ -126,7 +126,7 @@ CREATE TABLE IF NOT EXISTS login_challenges(id TEXT PRIMARY KEY, admin_id TEXT N
 
             using var cmd = c.CreateCommand();
             cmd.CommandText = "INSERT INTO login_challenges(id,admin_id,code_hash,expires_utc,attempts) VALUES($i,$a,$h,$e,0)";
-            cmd.Parameters.AddWithValue("$i", id);
+            cmd.Parameters.AddWithValue("$i", challengeId);
             cmd.Parameters.AddWithValue("$a", adminId);
             cmd.Parameters.AddWithValue("$h", hash);
             cmd.Parameters.AddWithValue("$e", expires.ToString("O"));
