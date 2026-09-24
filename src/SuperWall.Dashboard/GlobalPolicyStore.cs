@@ -79,9 +79,20 @@ public static class GlobalPolicyStore
 
         var effective = JsonSerializer.Deserialize<SuperWallPolicy>(JsonSerializer.Serialize(device)) ?? new SuperWallPolicy();
         effective.Version = Math.Max(global.Version, device.Version);
+        var allowedByDevice = new HashSet<string>(
+            (device.AllowedDomains ?? new List<string>())
+                .Select(NormalizeDomain)
+                .Where(x => x.Length > 0),
+            StringComparer.OrdinalIgnoreCase);
+
         effective.BlockedDomains = global.BlockedDomains
             .Concat(device.BlockedDomains)
             .Where(x => !string.IsNullOrWhiteSpace(x))
+            .Select(NormalizeDomain)
+            .Where(x => x.Length > 0 && !allowedByDevice.Contains(x))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+        effective.AllowedDomains = (device.AllowedDomains ?? new List<string>())
             .Select(NormalizeDomain)
             .Where(x => x.Length > 0)
             .Distinct(StringComparer.OrdinalIgnoreCase)
