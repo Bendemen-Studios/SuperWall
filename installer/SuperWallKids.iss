@@ -1,5 +1,5 @@
 #define MyAppName "SuperWall Kids"
-#define MyAppVersion "0.5.17"
+#define MyAppVersion "0.5.18"
 #define MyPublisher "Bendemen Studios"
 #define MyExeName "SuperWall.Agent.exe"
 #define ServiceSddl "D:(A;;CCLCSWRPWPDTLOCRRC;;;SY)(A;;CCDCLCSWRPWPDTLOCRSDRCWDWO;;;BA)(A;;CCLCRP;;;AU)"
@@ -140,8 +140,6 @@ begin
   AgentPath := ExpandConstant('{app}\{#MyExeName}');
   WrapperPath := ExpandConstant('{sys}\superwall.cmd');
 
-  // Install the administrator-only command shim: superwall -uninstall.
-  // The agent performs the actual administrator check before executing commands.
   SaveStringToFile(WrapperPath,
     '@echo off' + #13#10 +
     '"%ProgramFiles%\SuperWall Kids\SuperWall.Agent.exe" %*' + #13#10 +
