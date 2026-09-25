@@ -32,7 +32,9 @@ public static class SuperWallUninstaller
         {
             StopAndDeleteService();
             ResetCurrentUserBrowserPolicies();
+            ResetTargetUserBrowserPolicies();
             ResetWindowsProxy();
+            ResetTargetUserProxy();
             RemoveSuperWallScheduledTasks();
             RunGpUpdate();
             ScheduleSelfDelete();
@@ -116,6 +118,34 @@ public static class SuperWallUninstaller
         }
     }
 
+    private static void ResetTargetUserBrowserPolicies()
+    {
+        var ownedValues = new[]
+        {
+            "ProxyMode", "ProxyServer", "DnsOverHttpsMode", "QuicAllowed",
+            "BackgroundModeEnabled", "ExtensionInstallBlocklist", "ProxyBypassList",
+            "DownloadRestrictions", "URLBlocklist"
+        };
+
+        foreach (var path in ChromiumPolicyPaths)
+        {
+            try
+            {
+                using var key = WindowsUserScope.OpenUserPolicyKey(path, writable: true);
+                if (key is null) continue;
+                foreach (var value in ownedValues)
+                    key.DeleteValue(value, throwOnMissingValue: false);
+                key.DeleteSubKeyTree("URLBlocklist", throwOnMissingSubKey: false);
+            }
+            catch (Exception ex)
+            {
+                AgentLogger.Error($"Could not reset target-user browser policy: {path}", ex);
+            }
+        }
+
+        WindowsUserScope.UnloadTargetHiveIfLoadedByUs();
+    }
+
     private static void ResetWindowsProxy()
     {
         // Reset WinHTTP and the current Windows user's Internet Settings.
@@ -138,6 +168,28 @@ public static class SuperWallUninstaller
         catch (Exception ex)
         {
             AgentLogger.Error("Could not reset current-user Windows proxy settings.", ex);
+        }
+    }
+
+    private static void ResetTargetUserProxy()
+    {
+        try
+        {
+            using var key = WindowsUserScope.OpenUserPolicyKey(
+                @"Software\\Microsoft\\Windows\\CurrentVersion\\Internet Settings", writable: true);
+            if (key is null) return;
+            key.SetValue("ProxyEnable", 0, RegistryValueKind.DWord);
+            key.DeleteValue("ProxyServer", throwOnMissingValue: false);
+            key.DeleteValue("ProxyOverride", throwOnMissingValue: false);
+            key.DeleteValue("AutoConfigURL", throwOnMissingValue: false);
+        }
+        catch (Exception ex)
+        {
+            AgentLogger.Error("Could not reset target-user Windows proxy settings.", ex);
+        }
+        finally
+        {
+            WindowsUserScope.UnloadTargetHiveIfLoadedByUs();
         }
     }
 
