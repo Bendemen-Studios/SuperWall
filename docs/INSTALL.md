@@ -1,5 +1,7 @@
 # Install SuperWall
 
+**Current release:** v0.5.19
+
 ## 1. Central dashboard
 
 Production dashboard URL:
@@ -20,7 +22,7 @@ For the public hostname `superwall.hvmc.nl`, proxy HTTPS traffic to the dashboar
 
 ## 2. SuperWall Kids
 
-The Kids installer is `SuperWall-Kids-Setup-0.2.0.exe`. During installation the dashboard URL is prefilled as:
+The Kids installer is generated from the current v0.5.19 release. During installation the dashboard URL is prefilled as:
 
 `https://superwall.hvmc.nl`
 
@@ -30,7 +32,7 @@ The child PC must use a standard Windows account without local administrator rig
 
 ## 3. Download override
 
-Downloads are blocked by default. The local override is short-lived (10 minutes) and requires the configured PIN `2003`. Only an administrator can access the local unlock endpoint.
+Downloads are blocked by default where supported. Temporary download approval is controlled by local Windows administrator authentication.
 
 ## Offline-first behavior
 
@@ -39,3 +41,19 @@ The device applies the last successful policy from disk. Losing the dashboard co
 ## Important operational note
 
 SuperWall uses managed browser policies, a local filtering proxy, DNS/hosts hardening and additional download/process controls. The intended deployment boundary is a non-administrative child account. Local administrator access remains outside the application's trust boundary.
+
+## Maintenance commands
+
+Run these commands from an elevated Command Prompt or PowerShell:
+
+```cmd
+superwall -status
+superwall -update
+superwall -uninstall
+```
+
+- `-status` checks the SuperWall Agent service.
+- `-update` checks for a newer release and starts the updater when one is available.
+- `-uninstall` removes the SuperWall service, scheduled tasks, SuperWall-managed browser policies and SuperWall proxy settings, including the configured target user's settings.
+
+The commands also support the long form: `--status`, `--update` and `--uninstall`.
