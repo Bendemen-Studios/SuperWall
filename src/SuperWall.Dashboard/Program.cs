@@ -19,7 +19,11 @@ using (var c = new SqliteConnection($"Data Source={db}"))
 CREATE TABLE IF NOT EXISTS policies(device_id TEXT PRIMARY KEY,json TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS commands(id TEXT PRIMARY KEY,device_id TEXT,type TEXT,created TEXT,completed INTEGER DEFAULT 0);
 CREATE TABLE IF NOT EXISTS history(device_id TEXT,browser TEXT,url TEXT,title TEXT,visited TEXT,request_id TEXT);
-CREATE TABLE IF NOT EXISTS enrollment_keys(id TEXT PRIMARY KEY,label TEXT NOT NULL,key_hash TEXT NOT NULL UNIQUE,created_utc TEXT NOT NULL,expires_utc TEXT NOT NULL,used_utc TEXT,revoked_utc TEXT);\nCREATE INDEX IF NOT EXISTS idx_history_device_visited ON history(device_id, visited DESC);\nCREATE INDEX IF NOT EXISTS idx_history_device_request ON history(device_id, request_id, visited DESC);\nCREATE INDEX IF NOT EXISTS idx_commands_device_pending ON commands(device_id, type, completed, created DESC);\nCREATE INDEX IF NOT EXISTS idx_enrollment_keys_created ON enrollment_keys(created_utc DESC);"; cmd.ExecuteNonQuery();
+CREATE TABLE IF NOT EXISTS enrollment_keys(id TEXT PRIMARY KEY,label TEXT NOT NULL,key_hash TEXT NOT NULL UNIQUE,created_utc TEXT NOT NULL,expires_utc TEXT NOT NULL,used_utc TEXT,revoked_utc TEXT);
+CREATE INDEX IF NOT EXISTS idx_history_device_visited ON history(device_id, visited DESC);
+CREATE INDEX IF NOT EXISTS idx_history_device_request ON history(device_id, request_id, visited DESC);
+CREATE INDEX IF NOT EXISTS idx_commands_device_pending ON commands(device_id, type, completed, created DESC);
+CREATE INDEX IF NOT EXISTS idx_enrollment_keys_created ON enrollment_keys(created_utc DESC);"; cmd.ExecuteNonQuery();
     EnsureColumn(c,"devices","agent_token_hash","TEXT"); EnsureColumn(c,"history","request_id","TEXT"); PolicyProfiles.EnsureSchema(c); GlobalPolicyStore.EnsureSchema(c); AdminAuth.EnsureSchema(c,adminPassword);
 }
 if (string.IsNullOrWhiteSpace(adminPassword)) throw new InvalidOperationException("SUPERWALL_ADMIN_PASSWORD must be configured.");
