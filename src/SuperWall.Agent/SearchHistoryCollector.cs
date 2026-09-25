@@ -95,25 +95,29 @@ public sealed class SearchHistoryCollector
         string browser,
         DateTimeOffset since)
     {
-        var records = new List<HistoryRecord>();
+        if (!File.Exists(db)) return Array.Empty<HistoryRecord>();
+
+        var temp = CreateSqliteSnapshot(db);
+        if (temp is null) return Array.Empty<HistoryRecord>();
 
         try
         {
-            // Read the live database first. This preserves SQLite's WAL state while
-            // Chrome/Edge/etc. are running. If the live file cannot be opened,
-            // fall back to a temporary copy.
-            using var con = OpenReadOnly(db);
+            using var con = new SqliteConnection($"Data Source={temp};Mode=ReadOnly;Default Timeout=30");
             con.Open();
 
             using var cmd = con.CreateCommand();
+            // Read the visits table rather than urls.last_visit_time so the dashboard
+            // receives every recorded browser visit, not only the last visit per URL.
             cmd.CommandText =
-                "SELECT url,title,last_visit_time FROM urls " +
-                "WHERE last_visit_time > $min " +
-                "ORDER BY last_visit_time DESC LIMIT 25000";
+                "SELECT u.url,u.title,v.visit_time " +
+                "FROM visits v INNER JOIN urls u ON u.id=v.url " +
+                "WHERE v.visit_time > $min " +
+                "ORDER BY v.visit_time DESC LIMIT 25000";
             cmd.Parameters.AddWithValue(
                 "$min", (since.UtcTicks - ChromiumEpochTicks) / 10);
 
             using var r = cmd.ExecuteReader();
+            var records = new List<HistoryRecord>();
             while (r.Read())
             {
                 var micros = r.GetInt64(2);
@@ -122,7 +126,7 @@ public sealed class SearchHistoryCollector
                 records.Add(new HistoryRecord
                 {
                     Browser = browser,
-                    Url = r.GetString(0),
+                    Url = r.IsDBNull(0) ? "" : r.GetString(0),
                     Title = r.IsDBNull(1) ? "" : r.GetString(1),
                     VisitedUtc = new DateTimeOffset(
                         ChromiumEpochTicks + micros * 10, TimeSpan.Zero)
@@ -133,50 +137,12 @@ public sealed class SearchHistoryCollector
         }
         catch (Exception ex)
         {
-            AgentLogger.Error($"Could not read Chromium history database '{db}'. Trying a snapshot copy.", ex);
-            var temp = CopyDatabase(db);
-            if (temp is null) return Array.Empty<HistoryRecord>();
-
-            try
-            {
-                using var con = OpenReadOnly(temp);
-                con.Open();
-
-                using var cmd = con.CreateCommand();
-                cmd.CommandText =
-                    "SELECT url,title,last_visit_time FROM urls " +
-                    "WHERE last_visit_time > $min " +
-                    "ORDER BY last_visit_time DESC LIMIT 25000";
-                cmd.Parameters.AddWithValue(
-                    "$min", (since.UtcTicks - ChromiumEpochTicks) / 10);
-
-                using var r = cmd.ExecuteReader();
-                while (r.Read())
-                {
-                    var micros = r.GetInt64(2);
-                    if (micros <= 0) continue;
-
-                    records.Add(new HistoryRecord
-                    {
-                        Browser = browser,
-                        Url = r.GetString(0),
-                        Title = r.IsDBNull(1) ? "" : r.GetString(1),
-                        VisitedUtc = new DateTimeOffset(
-                            ChromiumEpochTicks + micros * 10, TimeSpan.Zero)
-                    });
-                }
-
-                return records;
-            }
-            catch (Exception snapshotEx)
-            {
-                AgentLogger.Error($"Could not read Chromium history snapshot '{db}'.", snapshotEx);
-                return Array.Empty<HistoryRecord>();
-            }
-            finally
-            {
-                TryDelete(temp);
-            }
+            AgentLogger.Error($"Could not read Chromium history snapshot '{db}'.", ex);
+            return Array.Empty<HistoryRecord>();
+        }
+        finally
+        {
+            TryDelete(temp);
         }
     }
 
@@ -190,20 +156,23 @@ public sealed class SearchHistoryCollector
 
         foreach (var profile in Directory.EnumerateDirectories(root))
         {
-            var temp = CopyDatabase(Path.Combine(profile, "places.sqlite"));
+            var source = Path.Combine(profile, "places.sqlite");
+            var temp = CreateSqliteSnapshot(source);
             if (temp is null) continue;
 
             try
             {
-                using var con = OpenReadOnly(temp);
+                using var con = new SqliteConnection($"Data Source={temp};Mode=ReadOnly;Default Timeout=30");
                 con.Open();
 
                 using var cmd = con.CreateCommand();
+                // moz_historyvisits contains one row per actual visit.
                 cmd.CommandText =
-                    "SELECT url,title,last_visit_date FROM moz_places " +
-                    "WHERE last_visit_date IS NOT NULL " +
-                    "AND last_visit_date > $min " +
-                    "ORDER BY last_visit_date DESC LIMIT 25000";
+                    "SELECT p.url,p.title,h.visit_date " +
+                    "FROM moz_historyvisits h INNER JOIN moz_places p ON p.id=h.place_id " +
+                    "WHERE h.visit_date IS NOT NULL " +
+                    "AND h.visit_date > $min " +
+                    "ORDER BY h.visit_date DESC LIMIT 25000";
                 cmd.Parameters.AddWithValue(
                     "$min",
                     (since.UtcTicks - DateTimeOffset.UnixEpoch.UtcTicks) / 10);
@@ -217,15 +186,15 @@ public sealed class SearchHistoryCollector
                     records.Add(new HistoryRecord
                     {
                         Browser = "Firefox",
-                        Url = r.GetString(0),
+                        Url = r.IsDBNull(0) ? "" : r.GetString(0),
                         Title = r.IsDBNull(1) ? "" : r.GetString(1),
                         VisitedUtc = DateTimeOffset.UnixEpoch.AddTicks(micros * 10)
                     });
                 }
             }
-            catch
+            catch (Exception ex)
             {
-                // Ignore a profile that is unavailable or has an incompatible schema.
+                AgentLogger.Error($"Could not read Firefox history snapshot '{source}'.", ex);
             }
             finally
             {
@@ -236,12 +205,48 @@ public sealed class SearchHistoryCollector
         return records;
     }
 
-    private static SqliteConnection OpenReadOnly(string path)
+    private static string? CreateSqliteSnapshot(string source)
     {
-        return new SqliteConnection($"Data Source={path};Mode=ReadOnly;Cache=Shared;Default Timeout=5");
+        if (!File.Exists(source)) return null;
+
+        string? directory = null;
+        SqliteConnection? sourceConnection = null;
+        SqliteConnection? backupConnection = null;
+
+        try
+        {
+            directory = Path.Combine(
+                Path.GetTempPath(), $"superwall-history-{Guid.NewGuid():N}");
+            Directory.CreateDirectory(directory);
+
+            var target = Path.Combine(directory, Path.GetFileName(source) + ".snapshot");
+
+            // SQLite's online backup API correctly includes WAL contents and is
+            // much safer than copying the main DB file while Chrome/Firefox is open.
+            sourceConnection = new SqliteConnection(
+                $"Data Source={source};Mode=ReadOnly;Default Timeout=30");
+            sourceConnection.Open();
+
+            backupConnection = new SqliteConnection(
+                $"Data Source={target};Mode=ReadWriteCreate;Default Timeout=30");
+            backupConnection.Open();
+
+            sourceConnection.BackupDatabase(backupConnection);
+            return target;
+        }
+        catch (Exception ex)
+        {
+            AgentLogger.Error($"Could not create SQLite history snapshot '{source}'.", ex);
+            if (!string.IsNullOrWhiteSpace(directory)) TryDelete(directory);
+            return null;
+        }
+        finally
+        {
+            backupConnection?.Dispose();
+            sourceConnection?.Dispose();
+        }
     }
 
-    private static string? CopyDatabase(string source)
     {
         if (!File.Exists(source)) return null;
 
