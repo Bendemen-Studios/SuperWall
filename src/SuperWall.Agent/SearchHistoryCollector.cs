@@ -15,7 +15,11 @@ public sealed class SearchHistoryCollector
         var since = DateTimeOffset.UtcNow.AddDays(-retentionDays);
         var result = new List<HistoryRecord>();
         var profile = WindowsUserScope.ProfilePath();
-        if (string.IsNullOrWhiteSpace(profile) || !Directory.Exists(profile)) return result;
+        if (string.IsNullOrWhiteSpace(profile) || !Directory.Exists(profile))
+        {
+            AgentLogger.Error("History collection skipped: target Windows user profile could not be resolved.");
+            return result;
+        }
 
         var local = Path.Combine(profile, "AppData", "Local");
         var roaming = Path.Combine(profile, "AppData", "Roaming");
@@ -41,12 +45,15 @@ public sealed class SearchHistoryCollector
         result.AddRange(ReadFirefox(
             Path.Combine(roaming, "Mozilla", "Firefox", "Profiles"), since));
 
-        return result
+        var final = result
             .GroupBy(x => new { x.Browser, x.Url, x.Title, x.VisitedUtc })
             .Select(x => x.First())
             .OrderByDescending(x => x.VisitedUtc)
             .Take(25000)
             .ToList();
+
+        AgentLogger.Info($"History collection finished. Profile={profile}, Records={final.Count}, RetentionDays={retentionDays}.");
+        return final;
     }
 
     private static IEnumerable<HistoryRecord> ReadChromiumProfiles(
@@ -88,13 +95,14 @@ public sealed class SearchHistoryCollector
         string browser,
         DateTimeOffset since)
     {
-        var temp = CopyDatabase(db);
-        if (temp is null) return Array.Empty<HistoryRecord>();
+        var records = new List<HistoryRecord>();
 
         try
         {
-            var records = new List<HistoryRecord>();
-            using var con = new SqliteConnection($"Data Source={temp}");
+            // Read the live database first. This preserves SQLite's WAL state while
+            // Chrome/Edge/etc. are running. If the live file cannot be opened,
+            // fall back to a temporary copy.
+            using var con = OpenReadOnly(db);
             con.Open();
 
             using var cmd = con.CreateCommand();
@@ -123,13 +131,52 @@ public sealed class SearchHistoryCollector
 
             return records;
         }
-        catch
+        catch (Exception ex)
         {
-            return Array.Empty<HistoryRecord>();
-        }
-        finally
-        {
-            TryDelete(temp);
+            AgentLogger.Error($"Could not read Chromium history database '{db}'. Trying a snapshot copy.", ex);
+            var temp = CopyDatabase(db);
+            if (temp is null) return Array.Empty<HistoryRecord>();
+
+            try
+            {
+                using var con = OpenReadOnly(temp);
+                con.Open();
+
+                using var cmd = con.CreateCommand();
+                cmd.CommandText =
+                    "SELECT url,title,last_visit_time FROM urls " +
+                    "WHERE last_visit_time > $min " +
+                    "ORDER BY last_visit_time DESC LIMIT 25000";
+                cmd.Parameters.AddWithValue(
+                    "$min", (since.UtcTicks - ChromiumEpochTicks) / 10);
+
+                using var r = cmd.ExecuteReader();
+                while (r.Read())
+                {
+                    var micros = r.GetInt64(2);
+                    if (micros <= 0) continue;
+
+                    records.Add(new HistoryRecord
+                    {
+                        Browser = browser,
+                        Url = r.GetString(0),
+                        Title = r.IsDBNull(1) ? "" : r.GetString(1),
+                        VisitedUtc = new DateTimeOffset(
+                            ChromiumEpochTicks + micros * 10, TimeSpan.Zero)
+                    });
+                }
+
+                return records;
+            }
+            catch (Exception snapshotEx)
+            {
+                AgentLogger.Error($"Could not read Chromium history snapshot '{db}'.", snapshotEx);
+                return Array.Empty<HistoryRecord>();
+            }
+            finally
+            {
+                TryDelete(temp);
+            }
         }
     }
 
@@ -148,7 +195,7 @@ public sealed class SearchHistoryCollector
 
             try
             {
-                using var con = new SqliteConnection($"Data Source={temp}");
+                using var con = OpenReadOnly(temp);
                 con.Open();
 
                 using var cmd = con.CreateCommand();
@@ -187,6 +234,11 @@ public sealed class SearchHistoryCollector
         }
 
         return records;
+    }
+
+    private static SqliteConnection OpenReadOnly(string path)
+    {
+        return new SqliteConnection($"Data Source={path};Mode=ReadOnly;Cache=Shared;Default Timeout=5");
     }
 
     private static string? CopyDatabase(string source)
