@@ -205,8 +205,6 @@ public sealed class SearchHistoryCollector
         return records;
     }
 
-    private static string? CreateSqliteSnapshot(string source)
-
     private static void TryDelete(string path)
     {
         try
