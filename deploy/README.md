@@ -13,7 +13,7 @@ apt update && apt install -y git
 cd /root
 git clone https://github.com/Bendemen-Studios/SuperWall.git
 cd /root/SuperWall
-bash deploy/install-ubuntu.sh
+bash deploy/deploy.sh
 ```
 
 If `/root/SuperWall` already exists, update it instead of cloning again:
@@ -25,7 +25,7 @@ git reset --hard origin/main
 bash deploy/install-ubuntu.sh
 ```
 
-The installer creates a dedicated `superwall` service account, installs .NET 8, publishes the dashboard, configures systemd and Nginx, creates server-side secrets when needed, and attempts to issue the TLS certificate for `superwall.hvmc.nl`.
+The deploy script creates/updates a dedicated `superwall` service account, installs .NET 8 when needed, publishes the dashboard, configures systemd, preserves `/var/lib/superwall`, creates server-side secrets when needed, backs up the current deployment and database, and performs a local health check. Nginx Proxy Manager remains responsible for the public HTTPS endpoint.
 
 ## DNS
 
