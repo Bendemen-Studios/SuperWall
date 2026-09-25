@@ -205,6 +205,35 @@ public sealed class SearchHistoryCollector
         return records;
     }
 
+    private static string? CreateSqliteSnapshot(string source)
+    {
+        if (!File.Exists(source)) return null;
+
+        var snapshot = Path.Combine(
+            Path.GetTempPath(),
+            $"superwall-history-{Guid.NewGuid():N}.sqlite");
+
+        try
+        {
+            using var sourceConnection = new SqliteConnection(
+                $"Data Source={source};Mode=ReadOnly;Default Timeout=30");
+            sourceConnection.Open();
+
+            using var backupConnection = new SqliteConnection(
+                $"Data Source={snapshot};Mode=ReadWriteCreate;Default Timeout=30");
+            backupConnection.Open();
+
+            sourceConnection.BackupDatabase(backupConnection);
+            return snapshot;
+        }
+        catch (Exception ex)
+        {
+            AgentLogger.Error($"Could not create SQLite history snapshot '{source}'.", ex);
+            TryDelete(snapshot);
+            return null;
+        }
+    }
+
     private static void TryDelete(string path)
     {
         try
