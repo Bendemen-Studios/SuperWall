@@ -21,7 +21,7 @@ public sealed class SuperWallPolicy
     [JsonPropertyName("searchHistoryEnabled")]
     public bool SearchHistoryEnabled { get; set; } = true;
     [JsonPropertyName("searchHistoryRetentionDays")]
-    public int SearchHistoryRetentionDays => Profile == RiskProfile.High ? 365 : 30;
+    public int SearchHistoryRetentionDays => Profile == RiskProfile.High ? 14 : 7;
     [JsonPropertyName("downloadsBlocked")]
     public bool DownloadsBlocked { get; set; } = true;
     [JsonPropertyName("dashboardUrl")]
