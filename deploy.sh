@@ -64,15 +64,29 @@ fi
 
 cd "$SOURCE_DIR"
 
-log "Current commit"
-git log -1 --oneline || true
-
-log "Fetching origin/$BRANCH"
-git fetch origin "$BRANCH"
-
 log "Updating source tree"
+
+git config --global --add safe.directory "$SOURCE_DIR" >/dev/null 2>&1 || true
+
+# The deploy script itself may have been edited locally on an older VPS checkout.
+# Never let a local copy of deploy.sh block the deployment update.
+if ! git diff --quiet -- deploy.sh || ! git diff --cached --quiet -- deploy.sh; then
+    log "Discarding local changes to deploy.sh"
+    git restore --staged --worktree -- deploy.sh
+fi
+
+git fetch --prune origin "$BRANCH"
 git checkout "$BRANCH"
-git pull --ff-only origin "$BRANCH"
+
+LOCAL_SHA="$(git rev-parse HEAD)"
+REMOTE_SHA="$(git rev-parse "origin/$BRANCH")"
+if [[ "$LOCAL_SHA" != "$REMOTE_SHA" ]]; then
+    git reset --hard "origin/$BRANCH"
+fi
+
+git clean -fd
+
+git log -1 --oneline
 
 COMMIT="$(git rev-parse --short HEAD)"
 FULL_COMMIT="$(git rev-parse HEAD)"
