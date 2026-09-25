@@ -14,7 +14,8 @@ set -Eeuo pipefail
 # 7. Verifies the service and HTTPS endpoint
 # 8. Rolls back automatically when the new service cannot start
 
-SOURCE_DIR="${SOURCE_DIR:-/opt/superwall-source}"
+SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+SOURCE_DIR="${SOURCE_DIR:-$SCRIPT_DIR}"
 PUBLISH_DIR="${PUBLISH_DIR:-/opt/superwall-publish}"
 CURRENT_DIR="${CURRENT_DIR:-/opt/superwall/current}"
 DATA_DIR="${DATA_DIR:-/var/lib/superwall}"
@@ -31,11 +32,33 @@ if [[ "$(id -u)" -ne 0 ]]; then
     die "Run this script as root: sudo bash deploy.sh"
 fi
 
-command -v git >/dev/null || die "git is not installed."
-command -v dotnet >/dev/null || die ".NET SDK is not installed."
+export DEBIAN_FRONTEND=noninteractive
+
+if ! command -v git >/dev/null || ! command -v curl >/dev/null || ! command -v gpg >/dev/null; then
+    apt-get update
+    apt-get install -y ca-certificates curl git gnupg
+fi
+
+if ! command -v dotnet >/dev/null || ! dotnet --list-sdks 2>/dev/null | grep -q '^8\.'; then
+    install -d /etc/apt/keyrings
+    if [[ ! -f /etc/apt/keyrings/microsoft.gpg ]]; then
+        curl -fsSL https://packages.microsoft.com/keys/microsoft.asc |
+            gpg --dearmor -o /etc/apt/keyrings/microsoft.gpg
+        chmod a+r /etc/apt/keyrings/microsoft.gpg
+    fi
+    cat > /etc/apt/sources.list.d/microsoft-prod.list <<EOF
+deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/microsoft.gpg] https://packages.microsoft.com/ubuntu/24.04/prod noble main
+EOF
+    apt-get update
+    apt-get install -y dotnet-sdk-8.0
+fi
+
 command -v systemctl >/dev/null || die "systemd is not available."
 
-[[ -d "$SOURCE_DIR/.git" ]] || die "Git repository not found: $SOURCE_DIR"
+if [[ ! -d "$SOURCE_DIR/.git" ]]; then
+    die "Git repository not found: $SOURCE_DIR"
+fi
+
 [[ -f "$SOURCE_DIR/src/SuperWall.Dashboard/SuperWall.Dashboard.csproj" ]] ||
     die "Dashboard project not found."
 
@@ -85,9 +108,9 @@ fi
 
 DB_BACKUP=""
 if [[ -f "$DATA_DIR/superwall.db" ]]; then
-    DB_BACKUP="$BACKUP_DIR-superwall.db"
+    mkdir -p "$BACKUP_DIR"
+    DB_BACKUP="$BACKUP_DIR/superwall.db"
     log "Backing up database to $DB_BACKUP"
-    mkdir -p "$BACKUP_ROOT"
     cp -a "$DATA_DIR/superwall.db" "$DB_BACKUP"
 fi
 
@@ -146,6 +169,9 @@ fi
 
 chown -R root:root "$CURRENT_DIR"
 
+# Install/update the systemd unit from the repository before starting.
+install -m 0644 "$SOURCE_DIR/deploy/systemd/superwall-dashboard.service"     "/etc/systemd/system/superwall-dashboard.service"
+
 # Make absolutely sure the database still exists when one existed before.
 if [[ -n "$DB_BACKUP" && ! -f "$DATA_DIR/superwall.db" ]]; then
     log "Database disappeared unexpectedly; restoring database backup."
@@ -154,6 +180,7 @@ fi
 
 log "Starting $SERVICE"
 systemctl daemon-reload
+systemctl enable "$SERVICE"
 systemctl start "$SERVICE"
 
 sleep 3
