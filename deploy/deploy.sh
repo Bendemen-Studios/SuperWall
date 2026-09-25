@@ -154,7 +154,12 @@ cp -a "$WORKDIR/publish/." "$APP_ROOT/"
 chown -R superwall:superwall "$APP_ROOT"
 
 # Always recreate the persistent data link safely.
-rm -rf "$APP_ROOT/data"
+if [[ -L "$APP_ROOT/data" ]]; then
+  rm -f "$APP_ROOT/data"
+elif [[ -e "$APP_ROOT/data" ]]; then
+  echo "ERROR: $APP_ROOT/data exists and is not a symlink. Refusing to delete persistent data."
+  exit 1
+fi
 ln -s "$DATA_ROOT" "$APP_ROOT/data"
 chown -h superwall:superwall "$APP_ROOT/data"
 
