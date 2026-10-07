@@ -175,9 +175,18 @@ public static class SuperWallUninstaller
     {
         try
         {
+            // WindowsUserScope resolves the persisted target user's HKCU hive.
+            // This path must use single separators; the previous double-separator
+            // form could prevent the target user's Internet Settings from being found.
             using var key = WindowsUserScope.OpenUserPolicyKey(
-                @"Software\\Microsoft\\Windows\\CurrentVersion\\Internet Settings", writable: true);
-            if (key is null) return;
+                @"SoftwareMicrosoftWindowsCurrentVersionInternet Settings", writable: true);
+
+            if (key is null)
+            {
+                AgentLogger.Error("Could not open target-user Internet Settings registry key.");
+                return;
+            }
+
             key.SetValue("ProxyEnable", 0, RegistryValueKind.DWord);
             key.DeleteValue("ProxyServer", throwOnMissingValue: false);
             key.DeleteValue("ProxyOverride", throwOnMissingValue: false);
