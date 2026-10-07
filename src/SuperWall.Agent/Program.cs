@@ -13,6 +13,27 @@ public static class Program
 
         if (command is "-uninstall" or "--uninstall")
         {
+            if (!SuperWallUninstaller.IsAdministrator())
+            {
+                try
+                {
+                    var elevated = Process.Start(new ProcessStartInfo
+                    {
+                        FileName = Environment.ProcessPath ?? throw new InvalidOperationException("SuperWall executable path is onbekend."),
+                        Arguments = "-uninstall --elevated",
+                        UseShellExecute = true,
+                        Verb = "runas"
+                    });
+                    Environment.ExitCode = elevated is null ? 1 : 0;
+                }
+                catch (System.ComponentModel.Win32Exception ex) when (ex.NativeErrorCode == 1223)
+                {
+                    Environment.ExitCode = 1223;
+                }
+
+                return;
+            }
+
             Environment.ExitCode = SuperWallUninstaller.Run();
             return;
         }
