@@ -113,7 +113,7 @@ internal static class InteractiveProcessLauncher
                 var startup = new STARTUPINFO
                 {
                     cb = Marshal.SizeOf<STARTUPINFO>(),
-                    lpDesktop = @"winsta0default"
+                    lpDesktop = @"winsta0\default"
                 };
 
                 var commandLine = Quote(executablePath) + (string.IsNullOrWhiteSpace(arguments) ? "" : " " + arguments);
@@ -147,5 +147,6 @@ internal static class InteractiveProcessLauncher
         }
     }
 
-    private static string Quote(string value) => """ + value.Replace(""", "\"") + """;
+    private static string Quote(string value) =>
+        """ + value.Replace(""", "\"", StringComparison.Ordinal) + """;
 }
