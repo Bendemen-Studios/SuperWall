@@ -148,5 +148,5 @@ internal static class InteractiveProcessLauncher
     }
 
     private static string Quote(string value) =>
-        """ + value.Replace(""", "\"", StringComparison.Ordinal) + """;
+        "\"" + value.Replace("\"", "\\\"", StringComparison.Ordinal) + "\"";
 }
