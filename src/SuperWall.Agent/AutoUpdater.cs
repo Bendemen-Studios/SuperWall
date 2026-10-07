@@ -1,4 +1,4 @@
-using System.Diagnostics;
+using Microsoft.Win32;
 using System.Reflection;
 using System.Security.Cryptography;
 using System.Text.Json;
@@ -9,6 +9,7 @@ public sealed class AutoUpdater
 {
     private const string ReleasesUrl = "https://api.github.com/repos/Bendemen-Studios/SuperWall/releases?per_page=20";
     private const string ChecksumName = "SHA256.txt";
+    private const string PendingUpdateValue = "SuperWall-Pending-Update";
     private readonly HttpClient _http = new() { Timeout = TimeSpan.FromMinutes(10) };
     private readonly string _stateDir;
 
@@ -102,14 +103,13 @@ public sealed class AutoUpdater
                 return;
             }
 
-            // Inno Setup /SILENT deliberately keeps its installation progress window visible.
-            // The SYSTEM service starts it in the active console session so the child user sees
-            // the same automated installer progress UI as a normal update.
-            InteractiveProcessLauncher.Start(
-                installer,
-                "/SILENT /SP- /NORESTART /CLOSEAPPLICATIONS /RESTARTAPPLICATIONS");
+            if (!ScheduleInstallAtNextStartup(installer))
+            {
+                AgentLogger.Error($"Verified update {latest} could not be scheduled for the next startup.");
+                return;
+            }
 
-            AgentLogger.Info($"Started verified SuperWall Kids installer {current} -> {latest}.");
+            AgentLogger.Info($"Verified SuperWall Kids update {current} -> {latest} downloaded and scheduled for the next Windows startup.");
             installer = null;
             checksum = null;
         }
@@ -121,6 +121,35 @@ public sealed class AutoUpdater
         {
             if (!string.IsNullOrWhiteSpace(installer)) TryDelete(installer);
             if (!string.IsNullOrWhiteSpace(checksum)) TryDelete(checksum);
+        }
+    }
+
+    private static bool ScheduleInstallAtNextStartup(string installerPath)
+    {
+        try
+        {
+            // RunOnce is intentionally used instead of an hourly service launch:
+            // the verified installer runs exactly once, after the target user logs in
+            // following the next reboot. This prevents an installer window appearing
+            // unexpectedly during normal school use.
+            var runOnce = WindowsUserScope.OpenUserPolicyKey(
+                @"SoftwareMicrosoftWindowsCurrentVersionRunOnce", true);
+
+            if (runOnce is null)
+                return false;
+
+            using (runOnce)
+            {
+                var command = $"\"{installerPath}\" /SILENT /SP- /NORESTART /CLOSEAPPLICATIONS /RESTARTAPPLICATIONS";
+                runOnce.SetValue(PendingUpdateValue, command, RegistryValueKind.String);
+            }
+
+            return true;
+        }
+        catch (Exception ex)
+        {
+            AgentLogger.Error("Could not schedule the verified installer for the next startup.", ex);
+            return false;
         }
     }
 
