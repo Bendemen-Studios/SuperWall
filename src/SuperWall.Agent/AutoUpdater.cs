@@ -8,22 +8,22 @@ namespace SuperWall.Agent;
 public sealed class AutoUpdater
 {
     private const string ReleasesUrl = "https://api.github.com/repos/Bendemen-Studios/SuperWall/releases?per_page=20";
-    private const string AgentAssetName = "SuperWall-Agent-win-x64.exe";
-    private const string AgentChecksumName = "SHA256-Agent.txt";
-    private readonly HttpClient _http = new() { Timeout = TimeSpan.FromMinutes(5) };
+    private const string ChecksumName = "SHA256.txt";
+    private readonly HttpClient _http = new() { Timeout = TimeSpan.FromMinutes(10) };
     private readonly string _stateDir;
 
     public AutoUpdater(string stateDir) => _stateDir = stateDir;
 
     public async Task CheckAndInstallAsync(CancellationToken ct)
     {
-        string? tempAgent = null;
-        string? helperScript = null;
+        string? installer = null;
+        string? checksum = null;
         try
         {
             using var request = new HttpRequestMessage(HttpMethod.Get, ReleasesUrl);
-            request.Headers.UserAgent.ParseAdd("SuperWall-Kids-Updater/2.3");
+            request.Headers.UserAgent.ParseAdd("SuperWall-Kids-Updater/3.0");
             request.Headers.Accept.ParseAdd("application/vnd.github+json");
+
             using var response = await _http.SendAsync(request, ct);
             if (!response.IsSuccessStatusCode)
             {
@@ -34,95 +34,84 @@ public sealed class AutoUpdater
             using var doc = JsonDocument.Parse(await response.Content.ReadAsStreamAsync(ct));
             JsonElement? selectedRelease = null;
             Version? latest = null;
+
             foreach (var release in doc.RootElement.EnumerateArray())
             {
                 if (release.TryGetProperty("draft", out var draft) && draft.GetBoolean()) continue;
                 if (release.TryGetProperty("prerelease", out var prerelease) && prerelease.GetBoolean()) continue;
+
                 var tag = release.TryGetProperty("tag_name", out var tagElement) ? tagElement.GetString() ?? "" : "";
                 if (!TryGetVersion(tag, out var candidate)) continue;
-                if (latest is null || candidate > latest) { latest = candidate; selectedRelease = release; }
+
+                if (latest is null || candidate > latest)
+                {
+                    latest = candidate;
+                    selectedRelease = release;
+                }
             }
 
             var current = GetCurrentVersion();
-            if (selectedRelease is null || latest is null || latest <= current) return;
+            if (selectedRelease is null || latest is null || latest <= current)
+                return;
 
-            JsonElement? agent = null;
-            JsonElement? checksum = null;
+            JsonElement? installerAsset = null;
+            JsonElement? checksumAsset = null;
             foreach (var asset in selectedRelease.Value.GetProperty("assets").EnumerateArray())
             {
                 var name = asset.GetProperty("name").GetString() ?? "";
-                if (name.Equals(AgentAssetName, StringComparison.OrdinalIgnoreCase)) agent = asset;
-                if (name.Equals(AgentChecksumName, StringComparison.OrdinalIgnoreCase)) checksum = asset;
+                if (name.Equals($"SuperWall-Kids-Setup-{latest}.exe", StringComparison.OrdinalIgnoreCase))
+                    installerAsset = asset;
+                else if (name.Equals(ChecksumName, StringComparison.OrdinalIgnoreCase))
+                    checksumAsset = asset;
             }
-            if (agent is null || checksum is null)
+
+            if (installerAsset is null || checksumAsset is null)
             {
-                AgentLogger.Error($"Release {latest} is missing the required agent or SHA256 asset; update skipped.");
+                AgentLogger.Error($"Release {latest} is missing the installer or SHA256.txt; update skipped.");
                 return;
             }
 
             Directory.CreateDirectory(_stateDir);
-            var target = Environment.ProcessPath;
-            if (string.IsNullOrWhiteSpace(target) || !File.Exists(target))
+            installer = Path.Combine(_stateDir, $"SuperWall-Kids-Setup-{latest}.exe");
+            checksum = Path.Combine(_stateDir, $"SuperWall-Kids-Setup-{latest}.sha256");
+            TryDelete(installer);
+            TryDelete(checksum);
+
+            var installerUrl = installerAsset.Value.GetProperty("browser_download_url").GetString();
+            var checksumUrl = checksumAsset.Value.GetProperty("browser_download_url").GetString();
+            if (string.IsNullOrWhiteSpace(installerUrl) || string.IsNullOrWhiteSpace(checksumUrl))
+                return;
+
+            await DownloadAsync(installerUrl, installer, ct);
+            if (!IsWindowsExecutable(installer))
             {
-                AgentLogger.Error("Cannot determine the current agent executable path; update skipped.");
+                AgentLogger.Error("Downloaded installer failed the Windows executable header check.");
                 return;
             }
 
-            tempAgent = Path.Combine(_stateDir, $"SuperWall-Agent-{latest}.download");
-            TryDelete(tempAgent);
-            var downloadUrl = agent.Value.GetProperty("browser_download_url").GetString();
-            if (string.IsNullOrWhiteSpace(downloadUrl)) return;
-            await DownloadAsync(downloadUrl, tempAgent, ct);
-            if (!IsWindowsExecutable(tempAgent))
-            {
-                AgentLogger.Error("Downloaded update failed the Windows executable header check.");
-                TryDelete(tempAgent);
-                return;
-            }
-
-            var checksumUrl = checksum.Value.GetProperty("browser_download_url").GetString();
-            if (string.IsNullOrWhiteSpace(checksumUrl))
-            {
-                AgentLogger.Error("Release checksum asset has no download URL; update skipped.");
-                TryDelete(tempAgent);
-                return;
-            }
-
-            var expected = (await DownloadTextAsync(checksumUrl, ct))
+            var checksumText = await DownloadTextAsync(checksumUrl, ct);
+            var expected = checksumText
                 .Split(new[] { ' ', '\t', '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries)
                 .FirstOrDefault();
-            await using var hashStream = File.OpenRead(tempAgent);
+
+            await using var hashStream = File.OpenRead(installer);
             var actual = Convert.ToHexString(await SHA256.HashDataAsync(hashStream, ct));
             if (string.IsNullOrWhiteSpace(expected) || !actual.Equals(expected, StringComparison.OrdinalIgnoreCase))
             {
-                AgentLogger.Error($"SHA256 validation failed for agent update {latest}; update skipped.");
-                TryDelete(tempAgent);
+                AgentLogger.Error($"SHA256 validation failed for installer {latest}; update skipped.");
                 return;
             }
 
-            helperScript = Path.Combine(_stateDir, $"SuperWall-Agent-{latest}.update.cmd");
-            var script = BuildUpdateScript(tempAgent, target, helperScript);
-            await File.WriteAllTextAsync(helperScript, script, ct);
+            // Inno Setup /SILENT deliberately keeps its installation progress window visible.
+            // The SYSTEM service starts it in the active console session so the child user sees
+            // the same automated installer progress UI as a normal update.
+            InteractiveProcessLauncher.Start(
+                installer,
+                "/SILENT /SP- /NORESTART /CLOSEAPPLICATIONS /RESTARTAPPLICATIONS");
 
-            var psi = new ProcessStartInfo
-            {
-                FileName = Environment.GetEnvironmentVariable("ComSpec") ?? "cmd.exe",
-                Arguments = $"/d /c \"{helperScript}\"",
-                CreateNoWindow = true,
-                UseShellExecute = false,
-                WindowStyle = ProcessWindowStyle.Hidden
-            };
-            using var helper = Process.Start(psi);
-            if (helper is null)
-            {
-                TryDelete(tempAgent);
-                TryDelete(helperScript);
-                return;
-            }
-
-            AgentLogger.Info($"Staged verified agent update {current} -> {latest}.");
-            tempAgent = null;
-            helperScript = null;
+            AgentLogger.Info($"Started verified SuperWall Kids installer {current} -> {latest}.");
+            installer = null;
+            checksum = null;
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }
         catch (HttpRequestException ex) { AgentLogger.Error("Update network error.", ex); }
@@ -130,38 +119,15 @@ public sealed class AutoUpdater
         catch (Exception ex) { AgentLogger.Error("Unexpected updater error.", ex); }
         finally
         {
-            if (!string.IsNullOrWhiteSpace(tempAgent)) TryDelete(tempAgent);
-            if (!string.IsNullOrWhiteSpace(helperScript)) TryDelete(helperScript);
+            if (!string.IsNullOrWhiteSpace(installer)) TryDelete(installer);
+            if (!string.IsNullOrWhiteSpace(checksum)) TryDelete(checksum);
         }
-    }
-
-    private static string BuildUpdateScript(string source, string target, string scriptPath)
-    {
-        static string Q(string value) => "\"" + value.Replace("\"", "\"\"") + "\"";
-        var sourceQ = Q(source);
-        var targetQ = Q(target);
-        var scriptQ = Q(scriptPath);
-        return $"@echo off\r\n" +
-               "setlocal\r\n" +
-               "timeout /t 2 /nobreak >nul\r\n" +
-               "sc.exe stop SuperWallAgent >nul 2>&1\r\n" +
-               "for /l %%i in (1,1,30) do (\r\n" +
-               "  sc.exe query SuperWallAgent | findstr /i \"STOPPED\" >nul && goto replace\r\n" +
-               "  timeout /t 1 /nobreak >nul\r\n" +
-               ")\r\n" +
-               "exit /b 1\r\n" +
-               ":replace\r\n" +
-               $"copy /y {sourceQ} {targetQ} >nul || exit /b 1\r\n" +
-               "sc.exe start SuperWallAgent >nul 2>&1\r\n" +
-               $"del /f /q {sourceQ} >nul 2>&1\r\n" +
-               $"del /f /q {scriptQ} >nul 2>&1\r\n" +
-               "exit /b 0\r\n";
     }
 
     private Version GetCurrentVersion()
     {
         var value = Assembly.GetExecutingAssembly().GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion
-                     ?? Assembly.GetExecutingAssembly().GetName().Version?.ToString() ?? "0.0.0";
+                    ?? Assembly.GetExecutingAssembly().GetName().Version?.ToString() ?? "0.0.0";
         if (value.Contains('+')) value = value[..value.IndexOf('+')];
         return Version.TryParse(value, out var v) ? v : new Version(0, 0, 0);
     }
@@ -175,14 +141,18 @@ public sealed class AutoUpdater
 
     private static bool IsWindowsExecutable(string path)
     {
-        try { using var stream = File.OpenRead(path); return stream.Length >= 2 && stream.ReadByte() == 'M' && stream.ReadByte() == 'Z'; }
+        try
+        {
+            using var stream = File.OpenRead(path);
+            return stream.Length >= 2 && stream.ReadByte() == 'M' && stream.ReadByte() == 'Z';
+        }
         catch { return false; }
     }
 
     private async Task DownloadAsync(string url, string path, CancellationToken ct)
     {
         using var request = new HttpRequestMessage(HttpMethod.Get, url);
-        request.Headers.UserAgent.ParseAdd("SuperWall-Kids-Updater/2.3");
+        request.Headers.UserAgent.ParseAdd("SuperWall-Kids-Updater/3.0");
         using var response = await _http.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, ct);
         response.EnsureSuccessStatusCode();
         await using var input = await response.Content.ReadAsStreamAsync(ct);
@@ -193,7 +163,7 @@ public sealed class AutoUpdater
     private async Task<string> DownloadTextAsync(string url, CancellationToken ct)
     {
         using var request = new HttpRequestMessage(HttpMethod.Get, url);
-        request.Headers.UserAgent.ParseAdd("SuperWall-Kids-Updater/2.3");
+        request.Headers.UserAgent.ParseAdd("SuperWall-Kids-Updater/3.0");
         using var response = await _http.SendAsync(request, ct);
         response.EnsureSuccessStatusCode();
         return await response.Content.ReadAsStringAsync(ct);
