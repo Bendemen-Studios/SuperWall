@@ -69,7 +69,7 @@ public sealed class AutoUpdater
             if (installerAsset is null || checksumAsset is null)
             {
                 AgentLogger.Error($"Release {latest} is missing the installer or SHA256.txt; update skipped.");
-                return;
+                return false;
             }
 
             Directory.CreateDirectory(_stateDir);
@@ -100,7 +100,7 @@ public sealed class AutoUpdater
             if (string.IsNullOrWhiteSpace(expected) || !actual.Equals(expected, StringComparison.OrdinalIgnoreCase))
             {
                 AgentLogger.Error($"SHA256 validation failed for installer {latest}; update skipped.");
-                return;
+                return false;
             }
 
             if (installNow)
@@ -112,12 +112,12 @@ public sealed class AutoUpdater
                     AgentLogger.Info($"Verified SuperWall Kids update {current} -> {latest} launched for immediate installation.");
                     installer = null;
                     checksum = null;
-                    return;
+                    return false;
                 }
                 catch (Exception ex)
                 {
                     AgentLogger.Error($"Verified update {latest} could not be launched for immediate installation.", ex);
-                    return;
+                    return false;
                 }
             }
 
