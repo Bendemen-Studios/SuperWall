@@ -1,6 +1,6 @@
 # SuperWall
 
-**Current release:** v0.5.19
+**Current release:** v0.5.21
 
 SuperWall is an offline-first youth defence and parental control platform for Windows.
 
