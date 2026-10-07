@@ -15,7 +15,7 @@ public sealed class AutoUpdater
 
     public AutoUpdater(string stateDir) => _stateDir = stateDir;
 
-    public async Task CheckAndInstallAsync(CancellationToken ct, bool installNow = false)
+    public async Task<bool> CheckAndInstallAsync(CancellationToken ct, bool installNow = false)
     {
         string? installer = null;
         string? checksum = null;
