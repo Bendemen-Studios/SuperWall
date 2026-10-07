@@ -15,7 +15,7 @@ public sealed class AutoUpdater
 
     public AutoUpdater(string stateDir) => _stateDir = stateDir;
 
-    public async Task CheckAndInstallAsync(CancellationToken ct)
+    public async Task CheckAndInstallAsync(CancellationToken ct, bool installNow = false)
     {
         string? installer = null;
         string? checksum = null;
@@ -101,6 +101,24 @@ public sealed class AutoUpdater
             {
                 AgentLogger.Error($"SHA256 validation failed for installer {latest}; update skipped.");
                 return;
+            }
+
+            if (installNow)
+            {
+                try
+                {
+                    var arguments = "/SP- /NORESTART /CLOSEAPPLICATIONS /RESTARTAPPLICATIONS";
+                    InteractiveProcessLauncher.Start(installer, arguments);
+                    AgentLogger.Info($"Verified SuperWall Kids update {current} -> {latest} launched for immediate installation.");
+                    installer = null;
+                    checksum = null;
+                    return;
+                }
+                catch (Exception ex)
+                {
+                    AgentLogger.Error($"Verified update {latest} could not be launched for immediate installation.", ex);
+                    return;
+                }
             }
 
             if (!ScheduleInstallAtNextStartup(installer))
