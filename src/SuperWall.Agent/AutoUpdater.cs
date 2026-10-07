@@ -133,7 +133,7 @@ public sealed class AutoUpdater
             // following the next reboot. This prevents an installer window appearing
             // unexpectedly during normal school use.
             var runOnce = WindowsUserScope.OpenUserPolicyKey(
-                @"SoftwareMicrosoftWindowsCurrentVersionRunOnce", true);
+                @"Software\Microsoft\Windows\CurrentVersion\RunOnce", true);
 
             if (runOnce is null)
                 return false;
