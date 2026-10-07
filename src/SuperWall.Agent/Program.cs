@@ -1,4 +1,5 @@
 using Microsoft.Extensions.DependencyInjection;
+using System.Diagnostics;
 using Microsoft.Extensions.Hosting;
 using System.Security.Principal;
 
@@ -20,7 +21,22 @@ public static class Program
         {
             if (!SuperWallUninstaller.IsAdministrator())
             {
-                Environment.ExitCode = 740;
+                try
+                {
+                    var elevated = Process.Start(new ProcessStartInfo
+                    {
+                        FileName = Environment.ProcessPath ?? throw new InvalidOperationException("SuperWall executable path is onbekend."),
+                        Arguments = "-update --elevated",
+                        UseShellExecute = true,
+                        Verb = "runas"
+                    });
+                    Environment.ExitCode = elevated is null ? 1 : 0;
+                }
+                catch (System.ComponentModel.Win32Exception ex) when (ex.NativeErrorCode == 1223)
+                {
+                    Environment.ExitCode = 1223;
+                }
+
                 return;
             }
 
