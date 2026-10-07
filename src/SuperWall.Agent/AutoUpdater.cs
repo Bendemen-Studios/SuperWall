@@ -29,7 +29,7 @@ public sealed class AutoUpdater
             if (!response.IsSuccessStatusCode)
             {
                 AgentLogger.Error($"Update check failed with HTTP {(int)response.StatusCode} ({response.ReasonPhrase}).");
-                return;
+                return false;
             }
 
             using var doc = JsonDocument.Parse(await response.Content.ReadAsStreamAsync(ct));
@@ -53,7 +53,7 @@ public sealed class AutoUpdater
 
             var current = GetCurrentVersion();
             if (selectedRelease is null || latest is null || latest <= current)
-                return;
+                return false;
 
             JsonElement? installerAsset = null;
             JsonElement? checksumAsset = null;
@@ -81,13 +81,13 @@ public sealed class AutoUpdater
             var installerUrl = installerAsset.Value.GetProperty("browser_download_url").GetString();
             var checksumUrl = checksumAsset.Value.GetProperty("browser_download_url").GetString();
             if (string.IsNullOrWhiteSpace(installerUrl) || string.IsNullOrWhiteSpace(checksumUrl))
-                return;
+                return false;
 
             await DownloadAsync(installerUrl, installer, ct);
             if (!IsWindowsExecutable(installer))
             {
                 AgentLogger.Error("Downloaded installer failed the Windows executable header check.");
-                return;
+                return false;
             }
 
             var checksumText = await DownloadTextAsync(checksumUrl, ct);
@@ -124,17 +124,18 @@ public sealed class AutoUpdater
             if (!ScheduleInstallAtNextStartup(installer))
             {
                 AgentLogger.Error($"Verified update {latest} could not be scheduled for the next startup.");
-                return;
+                return false;
             }
 
             AgentLogger.Info($"Verified SuperWall Kids update {current} -> {latest} downloaded and scheduled for the next Windows startup.");
             installer = null;
             checksum = null;
+            return true;
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }
         catch (HttpRequestException ex) { AgentLogger.Error("Update network error.", ex); }
         catch (JsonException ex) { AgentLogger.Error("Update release JSON error.", ex); }
-        catch (Exception ex) { AgentLogger.Error("Unexpected updater error.", ex); }
+        catch (Exception ex) { AgentLogger.Error("Unexpected updater error.", ex); return false; }
         finally
         {
             if (!string.IsNullOrWhiteSpace(installer)) TryDelete(installer);
