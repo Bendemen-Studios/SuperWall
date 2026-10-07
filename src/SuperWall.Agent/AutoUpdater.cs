@@ -133,8 +133,8 @@ public sealed class AutoUpdater
             return true;
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }
-        catch (HttpRequestException ex) { AgentLogger.Error("Update network error.", ex); }
-        catch (JsonException ex) { AgentLogger.Error("Update release JSON error.", ex); }
+        catch (HttpRequestException ex) { AgentLogger.Error("Update network error.", ex); return false; }
+        catch (JsonException ex) { AgentLogger.Error("Update release JSON error.", ex); return false; }
         catch (Exception ex) { AgentLogger.Error("Unexpected updater error.", ex); return false; }
         finally
         {
