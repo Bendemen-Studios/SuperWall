@@ -29,8 +29,10 @@ public static class Program
                 "SuperWall");
 
             Console.WriteLine("SuperWall update controleren...");
-            await new AutoUpdater(stateDir).CheckAndInstallAsync(CancellationToken.None, installNow: true);
-            Console.WriteLine("SuperWall update gestart indien een nieuwere release beschikbaar is.");
+            var updated = await new AutoUpdater(stateDir).CheckAndInstallAsync(CancellationToken.None, installNow: true);
+            Console.WriteLine(updated
+                ? "SuperWall update is gestart. De installer wordt nu weergegeven."
+                : "Geen nieuwere SuperWall-release beschikbaar.");
             return;
         }
 
